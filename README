@@ -17,3 +17,11 @@ INSTALL
 3. Copy k8.cc in this repository to the root of the v8 source code tree.
 
 4. Compile k8 with: g++ -Isrc -O3 -Wall k8.cc -o k8 -lz -lpthread libv8.a
+
+For example:
+
+  svn co http://v8.googlecode.com/svn/tags/3.0.6.1 v8
+  cd v8
+  scons snapshot=on arch=x64
+  cp PATH_TO/k8.cc .
+  g++ -Isrc -O3 -Wall k8.cc -o k8 -lz -lpthread libv8.a
