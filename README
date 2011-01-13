@@ -1,0 +1,19 @@
+INTRODUCTION
+============
+
+K8 is a Javascript shell built upon the Google v8 Javascript engine. Most
+importantly, it extends v8 with a `File' object.
+
+K8 also comes with a Javascript library independent of the K8 shell.
+
+
+INSTALL
+=======
+
+1. Check out the Google v8 Javascript engine from http://code.google.com/p/v8/
+
+2. Compile v8 to generate libv8.a
+
+3. Copy k8.cc in this repository to the root of the v8 source code tree.
+
+4. Compile k8 with: g++ -Isrc -O3 -Wall k8.cc -o k8 -lz -lpthread libv8.a
