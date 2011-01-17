@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <zlib.h>
+#include <sys/stat.h>
 
 #include "v8.h" // This is the header file in "v8/src" NOT in "v8/include"!!!
 
@@ -108,16 +109,21 @@ bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name)
 // copied from v8/samples/shell.cc
 JS_METHOD(k8_func_load)
 {
+	char buf[1024], *path = getenv("K8_LIBRARY_PATH");
+	struct stat r;
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value file(args[i]);
-		if (*file == NULL)
-			return v8::ThrowException(v8::String::New("Error loading file"));
-		v8::Handle<v8::String> source = k8_read_file(*file);
-		if (source.IsEmpty())
-			return v8::ThrowException(v8::String::New("Error loading file"));
+		buf[0] = 0;
+		if (stat(*file, &r) == 0) strcpy(buf, path);
+		else if (path) { // TODO: to allow multiple paths separated by ":"
+			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
+			if (stat(buf, &r) < 0) buf[0] = 0;
+		}
+		if (buf[0] == 0) return v8::ThrowException(v8::String::New("[load] fail to locate the file"));
+		v8::Handle<v8::String> source = k8_read_file(buf);
 		if (!k8_execute(source, v8::String::New(*file)))
-			return v8::ThrowException(v8::String::New("Error executing file"));
+			return v8::ThrowException(v8::String::New("[load] fail to execute the file"));
 	}
 	return v8::Undefined();
 }
@@ -338,23 +344,6 @@ int main(int argc, char *argv[])
 	v8i::Handle<v8i::JSArray> arguments_jsarray = v8i::Factory::NewJSArrayWithElements(arguments_array);
 	global->Set(v8::String::New("arguments"), v8::Utils::ToLocal(arguments_jsarray));
 
-	// load k8.js
-	char *K8_JS;
-	if ((K8_JS = getenv("K8")) != NULL) {
-		int fail = 0;
-		v8::HandleScope handle_scope;
-		v8::Handle<v8::String> source = k8_read_file(K8_JS);
-		if (source.IsEmpty()) fail = 1;
-		if (fail == 0) {
-			v8::Handle<v8::String> file_name = v8::String::New(K8_JS);
-			if (!k8_execute(source, file_name)) fail = 1;
-		}
-		if (fail) {
-			fprintf(stderr, "[k8] Fail to load k8.js at %s\n", K8_JS);
-			return 1;
-		}
-	} else fprintf(stderr, "[k8] The 'K8' evironment variable is not set. Do not load 'k8.js'.\n");
-
 	v8::Persistent<v8::Context> context = v8::Context::New(NULL, global);
 	for (int i = 1; i < new_argc; i++) {
 		// Enter the execution environment before evaluating any code.
@@ -382,7 +371,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	context.Dispose();
-	utility_context.Dispose(); // TODO: is this correct???
+	utility_context.Dispose(); // FIXME: is this correct???
 	if (new_argv) free(new_argv);
 	return 0;
 }
