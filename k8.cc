@@ -338,6 +338,23 @@ int main(int argc, char *argv[])
 	v8i::Handle<v8i::JSArray> arguments_jsarray = v8i::Factory::NewJSArrayWithElements(arguments_array);
 	global->Set(v8::String::New("arguments"), v8::Utils::ToLocal(arguments_jsarray));
 
+	// load k8.js
+	char *K8_JS;
+	if ((K8_JS = getenv("K8")) != NULL) {
+		int fail = 0;
+		v8::HandleScope handle_scope;
+		v8::Handle<v8::String> source = k8_read_file(K8_JS);
+		if (source.IsEmpty()) fail = 1;
+		if (fail == 0) {
+			v8::Handle<v8::String> file_name = v8::String::New(K8_JS);
+			if (!k8_execute(source, file_name)) fail = 1;
+		}
+		if (fail) {
+			fprintf(stderr, "[k8] Fail to load k8.js at %s\n", K8_JS);
+			return 1;
+		}
+	} else fprintf(stderr, "[k8] The 'K8' evironment variable is not set. Do not load 'k8.js'.\n");
+
 	v8::Persistent<v8::Context> context = v8::Context::New(NULL, global);
 	for (int i = 1; i < new_argc; i++) {
 		// Enter the execution environment before evaluating any code.
