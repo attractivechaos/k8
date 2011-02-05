@@ -115,7 +115,7 @@ JS_METHOD(k8_func_load)
 		v8::HandleScope handle_scope;
 		v8::String::Utf8Value file(args[i]);
 		buf[0] = 0;
-		if (stat(*file, &r) == 0) strcpy(buf, path);
+		if (stat(*file, &r) == 0) strcpy(buf, *file);
 		else if (path) { // TODO: to allow multiple paths separated by ":"
 			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
 			if (stat(buf, &r) < 0) buf[0] = 0;
