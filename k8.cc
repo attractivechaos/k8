@@ -6,6 +6,8 @@
 #include <zlib.h>
 #include <v8.h>
 
+#define JS_METHOD(name) v8::Handle<v8::Value> name(const v8::Arguments &args)
+
 /**********************************************
  *** Generic stream buffer from klib/kseq.h ***
  **********************************************/
@@ -126,7 +128,7 @@ const char *k8_cstr(const v8::String::Utf8Value &str)
 	return *str? *str : "<N/A>";
 }
 
-v8::Handle<v8::Value> k8f_print(const v8::Arguments &args)
+JS_METHOD(k8f_print)
 {
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
@@ -138,7 +140,7 @@ v8::Handle<v8::Value> k8f_print(const v8::Arguments &args)
 	return v8::Undefined();
 }
 
-v8::Handle<v8::Value> k8f_exit(const v8::Arguments &args)
+JS_METHOD(k8f_exit)
 {
 	int exit_code = args[0]->Int32Value();
 	fflush(stdout); fflush(stderr);
@@ -146,7 +148,7 @@ v8::Handle<v8::Value> k8f_exit(const v8::Arguments &args)
 	return v8::Undefined();
 }
 
-v8::Handle<v8::Value> k8f_version(const v8::Arguments &args)
+JS_METHOD(k8f_version)
 {
 	return v8::String::New(v8::V8::GetVersion());
 }
