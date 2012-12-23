@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
@@ -6,7 +7,18 @@
 #include <zlib.h>
 #include <v8.h>
 
-#define JS_METHOD(name) v8::Handle<v8::Value> name(const v8::Arguments &args)
+#define SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
+#define LOAD_PTR(_args, _index, _type) reinterpret_cast<_type>((_args).This()->GetAlignedPointerFromInternalField(_index))
+#define SAVE_VALUE(_args, _index, _val) (_args).This()->SetInternalField(_index, _val)
+#define LOAD_VALUE(_args, _index) (_args).This()->GetInternalField(_index)
+
+#define JS_STR(...) v8::String::New(__VA_ARGS__)
+
+#define JS_THROW(type, reason) v8::ThrowException(v8::Exception::type(JS_STR(reason)))
+#define JS_ERROR(reason) JS_THROW(Error, reason)
+#define JS_METHOD(_func, _args) v8::Handle<v8::Value> _func(const v8::Arguments &(_args))
+
+#define ASSERT_CONSTRUCTOR(_args) if (!(_args).IsConstructCall()) { return JS_ERROR("Invalid call format. Please use the 'new' operator."); }
 
 /**********************************************
  *** Generic stream buffer from klib/kseq.h ***
@@ -123,24 +135,24 @@ KSTREAM_INIT(gzFile, gzread, 0x10000)
  *** New built-in functions ***
  ******************************/
 
-const char *k8_cstr(const v8::String::Utf8Value &str)
+const char *k8_cstr(const v8::String::AsciiValue &str)
 {
 	return *str? *str : "<N/A>";
 }
 
-JS_METHOD(k8f_print)
+JS_METHOD(k8f_print, args)
 {
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
 		if (i) putchar('\t');
-		v8::String::Utf8Value str(args[i]);
+		v8::String::AsciiValue str(args[i]);
 		fputs(k8_cstr(str), stdout);
 	}
 	putchar('\n');
 	return v8::Undefined();
 }
 
-JS_METHOD(k8f_exit)
+JS_METHOD(k8f_exit, args)
 {
 	int exit_code = args[0]->Int32Value();
 	fflush(stdout); fflush(stderr);
@@ -148,9 +160,78 @@ JS_METHOD(k8f_exit)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8f_version)
+JS_METHOD(k8f_version, args)
 {
 	return v8::String::New(v8::V8::GetVersion());
+}
+
+/*******************
+ *** File object ***
+ *******************/
+
+JS_METHOD(k8f_file, args)
+{
+	v8::HandleScope handle_scope;
+	ASSERT_CONSTRUCTOR(args);
+	FILE *fpw = 0;
+	gzFile fpr = 0;
+	if (args.Length()) {
+		SAVE_VALUE(args, 0, args[0]);
+		v8::String::AsciiValue file(args[0]);
+		if (args.Length() >= 2) {
+			SAVE_VALUE(args, 1, args[1]);
+			v8::String::AsciiValue mode(args[1]);
+			const char *cstr = k8_cstr(mode);
+			if (strchr(cstr, 'w')) fpw = fopen(k8_cstr(file), cstr);
+			else fpr = gzopen(k8_cstr(file), cstr);
+		} else {
+			SAVE_VALUE(args, 1, JS_STR("r"));
+			fpr = gzopen(*file, "r");
+		}
+		if (fpr == 0 && fpw == 0)
+			return JS_THROW(Error, "[File] Fail to open the file");
+	} else {
+		SAVE_VALUE(args, 0, JS_STR("-"));
+		SAVE_VALUE(args, 1, JS_STR("r"));
+		fpr = gzdopen(fileno(stdin), "r");
+	}
+	SAVE_PTR(args, 2, fpr);
+	SAVE_PTR(args, 3, fpw);
+	return args.This();
+}
+
+JS_METHOD(k8f_file_close, args)
+{
+	gzFile fpr = LOAD_PTR(args, 2, gzFile);
+	FILE  *fpw = LOAD_PTR(args, 3, FILE*);
+	if (fpr) gzclose(fpr);
+	if (fpw) fclose(fpw);
+	SAVE_PTR(args, 2, 0);
+	SAVE_PTR(args, 3, 0);
+	return v8::Undefined();
+}
+
+JS_METHOD(k8f_file_read, args)
+{
+	v8::HandleScope scope;
+	gzFile fp = LOAD_PTR(args, 2, gzFile);
+	if (args.Length() == 0) return v8::Null();
+	long len, rdlen;
+	v8::String::AsciiValue clen(args[0]);
+	len = atol(k8_cstr(clen));
+	char buf[len];
+	rdlen = gzread(fp, buf, len);
+	return scope.Close(v8::String::New(buf, rdlen));
+}
+
+JS_METHOD(k8f_file_write, args)
+{
+	v8::HandleScope scope;
+	FILE *fp = LOAD_PTR(args, 3, FILE*);
+	if (args.Length() == 0) return scope.Close(v8::Integer::New(0));
+	v8::String::AsciiValue vbuf(args[0]);
+	long len = fwrite(*vbuf, 1, vbuf.length(), fp);
+	return scope.Close(v8::Integer::New(len));
 }
 
 /*********************
@@ -163,13 +244,24 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	global->Set(v8::String::New("print"), v8::FunctionTemplate::New(k8f_print));
 	global->Set(v8::String::New("exit"), v8::FunctionTemplate::New(k8f_exit));
 	global->Set(v8::String::New("version"), v8::FunctionTemplate::New(k8f_version));
+	{
+		v8::HandleScope scope;
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8f_file);
+		ft->SetClassName(JS_STR("File"));
+		ft->InstanceTemplate()->SetInternalFieldCount(4); // (fn, mode, fpr, fpw)
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set("read", v8::FunctionTemplate::New(k8f_file_read));
+		pt->Set("write", v8::FunctionTemplate::New(k8f_file_write));
+		pt->Set("close", v8::FunctionTemplate::New(k8f_file_close));
+		global->Set(v8::String::New("File"), ft);	
+	}
 	return v8::Context::New(NULL, global);
 }
 
 void ReportException(v8::TryCatch *try_catch) // nearly the same as shell.cc
 {
 	v8::HandleScope handle_scope;
-	v8::String::Utf8Value exception(try_catch->Exception());
+	v8::String::AsciiValue exception(try_catch->Exception());
 	const char* exception_string = k8_cstr(exception);
 	v8::Handle<v8::Message> message = try_catch->Message();
 	if (message.IsEmpty()) {
@@ -177,12 +269,12 @@ void ReportException(v8::TryCatch *try_catch) // nearly the same as shell.cc
 		fprintf(stderr, "%s\n", exception_string);
 	} else {
 		// Print (filename):(line number): (message).
-		v8::String::Utf8Value filename(message->GetScriptResourceName());
+		v8::String::AsciiValue filename(message->GetScriptResourceName());
 		const char* filename_string = k8_cstr(filename);
 		int linenum = message->GetLineNumber();
 		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
 		// Print line of source code.
-		v8::String::Utf8Value sourceline(message->GetSourceLine());
+		v8::String::AsciiValue sourceline(message->GetSourceLine());
 		const char *sourceline_string = k8_cstr(sourceline);
 		fprintf(stderr, "%s\n", sourceline_string);
 		// Print wavy underline (GetUnderline is deprecated).
@@ -191,7 +283,7 @@ void ReportException(v8::TryCatch *try_catch) // nearly the same as shell.cc
 		int end = message->GetEndColumn();
 		for (int i = start; i < end; i++) fputc('^', stderr);
 		fputc('\n', stderr);
-		v8::String::Utf8Value stack_trace(try_catch->StackTrace());
+		v8::String::AsciiValue stack_trace(try_catch->StackTrace());
 		if (stack_trace.length() > 0) { // TODO: is the following redundant?
 			const char* stack_trace_string = k8_cstr(stack_trace);
 			fputs(stack_trace_string, stderr); fputc('\n', stderr);
@@ -216,7 +308,7 @@ static bool ExecuteString(v8::Handle<v8::String> source, v8::Handle<v8::Value> n
 		} else {
 			assert(!try_catch.HasCaught());
 			if (prt_rst && !result->IsUndefined()) {
-				v8::String::Utf8Value str(result);
+				v8::String::AsciiValue str(result);
 				puts(k8_cstr(str));
 			}
 			return true;
