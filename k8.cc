@@ -52,6 +52,8 @@
 
 #define ASSERT_CONSTRUCTOR(_args) if (!(_args).IsConstructCall()) { return JS_ERROR("Invalid call format. Please use the 'new' operator."); }
 
+#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
+
 /*******************************
  *** Fundamental V8 routines ***
  *******************************/
@@ -193,6 +195,116 @@ JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches
 	return v8::Undefined();
 }
 
+/********************
+ *** Bytes object ***
+ ********************/
+
+typedef struct {
+	int32_t n, m;
+	uint8_t *a;
+} kvec8_t;
+
+JS_METHOD(k8_bytes, args)
+{
+	v8::HandleScope scope;
+	ASSERT_CONSTRUCTOR(args);
+	kvec8_t *a;
+	a = (kvec8_t*)calloc(1, sizeof(kvec8_t));
+	if (args.Length()) {
+		a->m = a->n = args[0]->Int32Value();
+		a->a = (uint8_t*)calloc(a->n, 1);
+	}
+	SAVE_PTR(args, 0, a);
+	args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+	return args.This();
+}
+
+static inline bool kv_resize(kvec8_t *a, int32_t m)
+{
+	a->n = m;
+	kroundup32(m);
+	if (a->m != m) {
+		a->a = (uint8_t*)realloc(a->a, m);
+		if (a->m < m) memset(&a->a[a->m], 0, m - a->m);
+		a->m = m;
+		return true;
+	}
+	return false;
+}
+
+JS_METHOD(k8_bytes_size, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	if (args.Length()) {
+		kv_resize(a, args[0]->Int32Value());
+		args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+	}
+	return scope.Close(v8::Integer::New(a->n));
+}
+
+JS_METHOD(k8_bytes_destroy, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	free(a->a); free(a);
+	SAVE_PTR(args, 0, 0);
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_bytes_get, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	if (args.Length() == 0) return v8::Undefined();
+	long i = args[0]->Int32Value();
+	return i >= a->n? v8::Undefined() : scope.Close(v8::Integer::New(a->a[i]));
+}
+
+JS_METHOD(k8_bytes_set, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	if (args.Length() == 0) return v8::Undefined();
+	int cnt = 0;
+	int32_t pos = args.Length() >= 2? args[1]->Int32Value() : a->n;
+	if (args[0]->IsUint32()) {
+		if (pos + 1 >= a->n) {
+			kv_resize(a, pos + 1);
+			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		}
+		a->a[pos] = args[0]->Int32Value();
+		cnt = 1;
+	} else if (args[0]->IsString()) {
+		v8::String::AsciiValue str(args[0]);
+		const char *cstr = *str;
+		if (pos + str.length() >= a->n) {
+			kv_resize(a, pos + str.length());
+			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		}
+		for (int i = 0; i < str.length(); ++i)
+			a->a[i+pos] = uint8_t(cstr[i]);
+	} else if (args[0]->IsArray()) {
+		v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(args[0]);
+		if (pos + array->Length() >= (unsigned)a->n) {
+			kv_resize(a, pos + array->Length());
+			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		}
+		for (unsigned i = 0; i < array->Length(); ++i) {
+			v8::Handle<v8::Value> tmp = array->Get(v8::Integer::New(i));
+			a->a[i+pos] = tmp->IsUint32()? tmp->Int32Value() : 0;
+		}
+	}
+	return scope.Close(v8::Integer::New(cnt));
+}
+
+JS_METHOD(k8_bytes_toString, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	return scope.Close(v8::String::New((char*)a->a, a->n));
+}
+
 /*******************
  *** File object ***
  *******************/
@@ -285,8 +397,6 @@ static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
 #define KS_SEP_TAB   1 // isspace() && !' '
 #define KS_SEP_LINE  2 // line separator: " \n" (Unix) or "\r\n" (Windows)
 #define KS_SEP_MAX   2
-
-#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
 
 typedef struct __kstream_t {
 	unsigned char *buf;
@@ -414,6 +524,19 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	global->Set(JS_STR("exit"), v8::FunctionTemplate::New(k8_exit));
 	global->Set(JS_STR("load"), v8::FunctionTemplate::New(k8_load));
 	global->Set(JS_STR("version"), v8::FunctionTemplate::New(k8_version));
+	{ // add the 'Bytes' object
+		v8::HandleScope scope;
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_bytes);
+		ft->SetClassName(JS_STR("Bytes"));
+		ft->InstanceTemplate()->SetInternalFieldCount(2);
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
+		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
+		pt->Set("get", v8::FunctionTemplate::New(k8_bytes_get));
+		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
+		global->Set(JS_STR("Bytes"), ft);	
+	}
 	{ // add the 'File' object
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_file);
