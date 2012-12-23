@@ -20,117 +20,6 @@
 
 #define ASSERT_CONSTRUCTOR(_args) if (!(_args).IsConstructCall()) { return JS_ERROR("Invalid call format. Please use the 'new' operator."); }
 
-/**********************************************
- *** Generic stream buffer from klib/kseq.h ***
- **********************************************/
-
-#define KS_SEP_SPACE 0 // isspace(): \t, \n, \v, \f, \r
-#define KS_SEP_TAB   1 // isspace() && !' '
-#define KS_SEP_LINE  2 // line separator: " \n" (Unix) or "\r\n" (Windows)
-#define KS_SEP_MAX   2
-
-#define __KS_TYPE(type_t) \
-	typedef struct __kstream_t { \
-		unsigned char *buf; \
-		int begin, end, is_eof; \
-		type_t f; \
-	} kstream_t;
-
-#define ks_eof(ks) ((ks)->is_eof && (ks)->begin >= (ks)->end)
-#define ks_rewind(ks) ((ks)->is_eof = (ks)->begin = (ks)->end = 0)
-
-#define __KS_BASIC(type_t, __bufsize) \
-	static inline kstream_t *ks_init(type_t f) { \
-		kstream_t *ks = (kstream_t*)calloc(1, sizeof(kstream_t)); \
-		ks->f = f; \
-		ks->buf = (unsigned char*)malloc(__bufsize); \
-		return ks; \
-	} \
-	static inline void ks_destroy(kstream_t *ks) { if (ks) { free(ks->buf); free(ks); } }
-
-#define __KS_GETC(__read, __bufsize) \
-	static inline int ks_getc(kstream_t *ks) { \
-		if (ks->is_eof && ks->begin >= ks->end) return -1; \
-		if (ks->begin >= ks->end) { \
-			ks->begin = 0; ks->end = __read(ks->f, ks->buf, __bufsize); \
-			if (ks->end < __bufsize) ks->is_eof = 1; \
-			if (ks->end == 0) return -1; \
-		} \
-		return (int)ks->buf[ks->begin++]; \
-	}
-
-#ifndef KSTRING_T
-#define KSTRING_T kstring_t
-typedef struct __kstring_t {
-	size_t l, m;
-	char *s;
-} kstring_t;
-#endif
-
-#ifndef kroundup32
-#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
-#endif
-
-#define __KS_GETUNTIL(__read, __bufsize) \
-	static int ks_getuntil2(kstream_t *ks, int delimiter, kstring_t *str, int *dret, int append) \
-	{ \
-		if (dret) *dret = 0; \
-		str->l = append? str->l : 0; \
-		if (ks->begin >= ks->end && ks->is_eof) return -1; \
-		for (;;) { \
-			int i; \
-			if (ks->begin >= ks->end) { \
-				if (!ks->is_eof) { \
-					ks->begin = 0; \
-					ks->end = __read(ks->f, ks->buf, __bufsize); \
-					if (ks->end < __bufsize) ks->is_eof = 1; \
-					if (ks->end == 0) break; \
-				} else break; \
-			} \
-			if (delimiter == KS_SEP_LINE) { \
-				for (i = ks->begin; i < ks->end; ++i) \
-					if (ks->buf[i] == '\n') break; \
-			} else if (delimiter > KS_SEP_MAX) { \
-				for (i = ks->begin; i < ks->end; ++i) \
-					if (ks->buf[i] == delimiter) break; \
-			} else if (delimiter == KS_SEP_SPACE) { \
-				for (i = ks->begin; i < ks->end; ++i) \
-					if (isspace(ks->buf[i])) break; \
-			} else if (delimiter == KS_SEP_TAB) { \
-				for (i = ks->begin; i < ks->end; ++i) \
-					if (isspace(ks->buf[i]) && ks->buf[i] != ' ') break; \
-			} else i = 0; /* never come to here! */ \
-			if (str->m - str->l < (size_t)(i - ks->begin + 1)) { \
-				str->m = str->l + (i - ks->begin) + 1; \
-				kroundup32(str->m); \
-				str->s = (char*)realloc(str->s, str->m); \
-			} \
-			memcpy(str->s + str->l, ks->buf + ks->begin, i - ks->begin); \
-			str->l = str->l + (i - ks->begin); \
-			ks->begin = i + 1; \
-			if (i < ks->end) { \
-				if (dret) *dret = ks->buf[i]; \
-				break; \
-			} \
-		} \
-		if (str->s == 0) { \
-			str->m = 1; \
-			str->s = (char*)calloc(1, 1); \
-		} else if (delimiter == KS_SEP_LINE && str->l > 1 && str->s[str->l-1] == '\r') --str->l; \
-		str->s[str->l] = '\0';											\
-		return str->l; \
-	} \
-	static inline int ks_getuntil(kstream_t *ks, int delimiter, kstring_t *str, int *dret) \
-	{ return ks_getuntil2(ks, delimiter, str, dret, 0); }
-
-#define KSTREAM_INIT(type_t, __read, __bufsize) \
-	__KS_TYPE(type_t) \
-	__KS_BASIC(type_t, __bufsize) \
-	__KS_GETC(__read, __bufsize) \
-	__KS_GETUNTIL(__read, __bufsize)
-
-KSTREAM_INIT(gzFile, gzread, 0x10000)
-
 /******************************
  *** New built-in functions ***
  ******************************/
@@ -140,7 +29,7 @@ const char *k8_cstr(const v8::String::AsciiValue &str)
 	return *str? *str : "<N/A>";
 }
 
-JS_METHOD(k8f_print, args)
+JS_METHOD(k8_print, args)
 {
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
@@ -152,7 +41,7 @@ JS_METHOD(k8f_print, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8f_exit, args)
+JS_METHOD(k8_exit, args)
 {
 	int exit_code = args[0]->Int32Value();
 	fflush(stdout); fflush(stderr);
@@ -160,7 +49,7 @@ JS_METHOD(k8f_exit, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8f_version, args)
+JS_METHOD(k8_version, args)
 {
 	return v8::String::New(v8::V8::GetVersion());
 }
@@ -169,7 +58,7 @@ JS_METHOD(k8f_version, args)
  *** File object ***
  *******************/
 
-JS_METHOD(k8f_file, args)
+JS_METHOD(k8_file, args)
 {
 	v8::HandleScope handle_scope;
 	ASSERT_CONSTRUCTOR(args);
@@ -200,7 +89,7 @@ JS_METHOD(k8f_file, args)
 	return args.This();
 }
 
-JS_METHOD(k8f_file_close, args)
+JS_METHOD(k8_file_close, args)
 {
 	gzFile fpr = LOAD_PTR(args, 2, gzFile);
 	FILE  *fpw = LOAD_PTR(args, 3, FILE*);
@@ -211,7 +100,7 @@ JS_METHOD(k8f_file_close, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8f_file_read, args)
+JS_METHOD(k8_file_read, args)
 {
 	v8::HandleScope scope;
 	gzFile fp = LOAD_PTR(args, 2, gzFile);
@@ -224,7 +113,7 @@ JS_METHOD(k8f_file_read, args)
 	return scope.Close(v8::String::New(buf, rdlen));
 }
 
-JS_METHOD(k8f_file_write, args)
+JS_METHOD(k8_file_write, args)
 {
 	v8::HandleScope scope;
 	FILE *fp = LOAD_PTR(args, 3, FILE*);
@@ -234,6 +123,136 @@ JS_METHOD(k8f_file_write, args)
 	return scope.Close(v8::Integer::New(len));
 }
 
+/**********************
+ *** iStream object ***
+ **********************/
+
+static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
+{
+	v8::HandleScope scope;
+	v8::Handle<v8::Function> func = obj->Get(v8::String::New("read")).As<v8::Function>();
+	v8::Handle<v8::Value> arg = v8::Integer::New(len);
+	v8::Handle<v8::Value> rst = func->Call(obj, 1, &arg);
+	v8::String::AsciiValue vbuf(rst);
+	long ret = vbuf.length();
+	memcpy(buf, *vbuf, ret);
+	return ret;
+}
+
+#define KS_SEP_SPACE 0 // isspace(): \t, \n, \v, \f, \r
+#define KS_SEP_TAB   1 // isspace() && !' '
+#define KS_SEP_LINE  2 // line separator: " \n" (Unix) or "\r\n" (Windows)
+#define KS_SEP_MAX   2
+
+#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
+
+typedef struct __kstream_t {
+	unsigned char *buf;
+	int begin, end, is_eof, buf_size;
+	struct { long l, m; char *s; } s;
+} kstream_t;
+
+#define ks_eof(ks) ((ks)->is_eof && (ks)->begin >= (ks)->end)
+#define ks_rewind(ks) ((ks)->is_eof = (ks)->begin = (ks)->end = 0)
+
+static inline kstream_t *ks_init(int __bufsize)
+{
+	kstream_t *ks = (kstream_t*)calloc(1, sizeof(kstream_t));
+	ks->buf_size = __bufsize;
+	ks->buf = (unsigned char*)malloc(__bufsize);
+	return ks;
+}
+
+static inline void ks_destroy(kstream_t *ks)
+{ 
+	if (ks) { free(ks->buf); free(ks->s.s); free(ks); }
+}
+
+static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, int delimiter, int *dret)
+{
+	if (dret) *dret = 0;
+	ks->s.l = 0;
+	if (ks->begin >= ks->end && ks->is_eof) return -1;
+	for (;;) {
+		int i;
+		if (ks->begin >= ks->end) {
+			if (!ks->is_eof) {
+				ks->begin = 0;
+				ks->end = obj_read(fp, ks->buf, ks->buf_size);
+				if (ks->end < ks->buf_size) ks->is_eof = 1;
+				if (ks->end == 0) break;
+			} else break;
+		}
+		if (delimiter == KS_SEP_LINE) {
+			for (i = ks->begin; i < ks->end; ++i)
+				if (ks->buf[i] == '\n') break;
+		} else if (delimiter > KS_SEP_MAX) {
+			for (i = ks->begin; i < ks->end; ++i)
+				if (ks->buf[i] == delimiter) break;
+		} else if (delimiter == KS_SEP_SPACE) {
+			for (i = ks->begin; i < ks->end; ++i)
+				if (isspace(ks->buf[i])) break;
+		} else if (delimiter == KS_SEP_TAB) {
+			for (i = ks->begin; i < ks->end; ++i)
+				if (isspace(ks->buf[i]) && ks->buf[i] != ' ') break;
+		} else i = 0; /* never come to here! */
+		if (ks->s.m - ks->s.l < i - ks->begin + 1) {
+			ks->s.m = ks->s.l + (i - ks->begin) + 1;
+			kroundup32(ks->s.m);
+			ks->s.s = (char*)realloc(ks->s.s, ks->s.m);
+		}
+		memcpy(ks->s.s + ks->s.l, ks->buf + ks->begin, i - ks->begin);
+		ks->s.l = ks->s.l + (i - ks->begin);
+		ks->begin = i + 1;
+		if (i < ks->end) {
+			if (dret) *dret = ks->buf[i];
+			break;
+		}
+	}
+	if (ks->s.s == 0) {
+		ks->s.m = 1;
+		ks->s.s = (char*)calloc(1, 1);
+	} else if (delimiter == KS_SEP_LINE && ks->s.l > 1 && ks->s.s[ks->s.l-1] == '\r') --ks->s.l;
+	ks->s.s[ks->s.l] = '\0';
+	return ks->s.l;
+}
+
+JS_METHOD(k8_istream, args)
+{
+	kstream_t *ks;
+	ASSERT_CONSTRUCTOR(args);
+	if (args.Length() == 0) return v8::Null();
+	ks = ks_init(65536);
+	SAVE_VALUE(args, 0, args[0]);
+	SAVE_PTR(args, 1, ks);
+	return args.This();
+}
+
+JS_METHOD(k8_istream_readline, args)
+{
+	v8::HandleScope scope;
+	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
+	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
+	int dret, ret;
+	ret = ks_getuntil(obj, ks, KS_SEP_LINE, &dret);
+	if (ret >= 0) return scope.Close(v8::String::New(ks->s.s, ks->s.l));
+	return v8::Null();
+}
+
+JS_METHOD(k8_istream_close, args)
+{
+	v8::HandleScope scope;
+	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
+	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
+	ks_destroy(ks);
+	v8::Handle<v8::Value> func = obj->Get(v8::String::New("close"));
+	if (func->IsFunction())
+		func.As<v8::Function>()->Call(obj, 0, 0);
+	SAVE_VALUE(args, 0, v8::Undefined());
+	SAVE_PTR(args, 1, 0);
+	return v8::Undefined();
+}
+
 /*********************
  *** Main function ***
  *********************/
@@ -241,19 +260,29 @@ JS_METHOD(k8f_file_write, args)
 static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 {
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
-	global->Set(v8::String::New("print"), v8::FunctionTemplate::New(k8f_print));
-	global->Set(v8::String::New("exit"), v8::FunctionTemplate::New(k8f_exit));
-	global->Set(v8::String::New("version"), v8::FunctionTemplate::New(k8f_version));
+	global->Set(v8::String::New("print"), v8::FunctionTemplate::New(k8_print));
+	global->Set(v8::String::New("exit"), v8::FunctionTemplate::New(k8_exit));
+	global->Set(v8::String::New("version"), v8::FunctionTemplate::New(k8_version));
 	{
 		v8::HandleScope scope;
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8f_file);
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_file);
 		ft->SetClassName(JS_STR("File"));
 		ft->InstanceTemplate()->SetInternalFieldCount(4); // (fn, mode, fpr, fpw)
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
-		pt->Set("read", v8::FunctionTemplate::New(k8f_file_read));
-		pt->Set("write", v8::FunctionTemplate::New(k8f_file_write));
-		pt->Set("close", v8::FunctionTemplate::New(k8f_file_close));
+		pt->Set("read", v8::FunctionTemplate::New(k8_file_read));
+		pt->Set("write", v8::FunctionTemplate::New(k8_file_write));
+		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
 		global->Set(v8::String::New("File"), ft);	
+	}
+	{
+		v8::HandleScope scope;
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_istream);
+		ft->SetClassName(JS_STR("iStream"));
+		ft->InstanceTemplate()->SetInternalFieldCount(2);
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set("readline", v8::FunctionTemplate::New(k8_istream_readline));
+		pt->Set("close", v8::FunctionTemplate::New(k8_istream_close));
+		global->Set(v8::String::New("iStream"), ft);	
 	}
 	return v8::Context::New(NULL, global);
 }
