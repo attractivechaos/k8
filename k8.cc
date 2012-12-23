@@ -20,14 +20,97 @@
 
 #define ASSERT_CONSTRUCTOR(_args) if (!(_args).IsConstructCall()) { return JS_ERROR("Invalid call format. Please use the 'new' operator."); }
 
-/******************************
- *** New built-in functions ***
- ******************************/
+/*******************************
+ *** Fundamental V8 routines ***
+ *******************************/
 
 const char *k8_cstr(const v8::String::AsciiValue &str)
 {
 	return *str? *str : "<N/A>";
 }
+
+static void k8_exception(v8::TryCatch *try_catch)
+{
+	v8::HandleScope handle_scope;
+	v8::String::AsciiValue exception(try_catch->Exception());
+	const char* exception_string = k8_cstr(exception);
+	v8::Handle<v8::Message> message = try_catch->Message();
+	if (message.IsEmpty()) {
+		// V8 didn't provide any extra information about this error; just print the exception.
+		fprintf(stderr, "%s\n", exception_string);
+	} else {
+		// Print (filename):(line number): (message).
+		v8::String::AsciiValue filename(message->GetScriptResourceName());
+		const char* filename_string = k8_cstr(filename);
+		int linenum = message->GetLineNumber();
+		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
+		// Print line of source code.
+		v8::String::AsciiValue sourceline(message->GetSourceLine());
+		const char *sourceline_string = k8_cstr(sourceline);
+		fprintf(stderr, "%s\n", sourceline_string);
+		// Print wavy underline (GetUnderline is deprecated).
+		int start = message->GetStartColumn();
+		for (int i = 0; i < start; i++) fputc(' ', stderr);
+		int end = message->GetEndColumn();
+		for (int i = start; i < end; i++) fputc('^', stderr);
+		fputc('\n', stderr);
+		v8::String::AsciiValue stack_trace(try_catch->StackTrace());
+		if (stack_trace.length() > 0) { // TODO: is the following redundant?
+			const char* stack_trace_string = k8_cstr(stack_trace);
+			fputs(stack_trace_string, stderr); fputc('\n', stderr);
+		}
+	}
+}
+
+bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool prt_rst)
+{
+	v8::HandleScope handle_scope;
+	v8::TryCatch try_catch;
+	v8::Handle<v8::Script> script = v8::Script::Compile(source, name);
+	if (script.IsEmpty()) {
+		k8_exception(&try_catch);
+		return false;
+	} else {
+		v8::Handle<v8::Value> result = script->Run();
+		if (result.IsEmpty()) {
+			assert(try_catch.HasCaught());
+			k8_exception(&try_catch);
+			return false;
+		} else {
+			assert(!try_catch.HasCaught());
+			if (prt_rst && !result->IsUndefined()) {
+				v8::String::AsciiValue str(result);
+				puts(k8_cstr(str));
+			}
+			return true;
+		}
+	}
+}
+
+v8::Handle<v8::String> k8_readfile(const char *name)
+{
+	FILE* file = fopen(name, "rb");
+	if (file == NULL) return v8::Handle<v8::String>();
+
+	fseek(file, 0, SEEK_END);
+	int size = ftell(file);
+	rewind(file);
+
+	char* chars = new char[size + 1];
+	chars[size] = '\0';
+	for (int i = 0; i < size;) {
+		int read = static_cast<int>(fread(&chars[i], 1, size - i, file));
+		i += read;
+	}
+	fclose(file);
+	v8::Handle<v8::String> result = v8::String::New(chars, size);
+	delete[] chars;
+	return result;
+}
+
+/******************************
+ *** New built-in functions ***
+ ******************************/
 
 JS_METHOD(k8_print, args)
 {
@@ -54,13 +137,37 @@ JS_METHOD(k8_version, args)
 	return v8::String::New(v8::V8::GetVersion());
 }
 
+JS_METHOD(k8_load, args)
+{
+	char buf[1024], *path = getenv("K8_LIBRARY_PATH");
+	FILE *fp;
+	for (int i = 0; i < args.Length(); i++) {
+		v8::HandleScope handle_scope;
+		v8::String::Utf8Value file(args[i]);
+		buf[0] = 0;
+		if ((fp = fopen(*file, "r")) != 0) {
+			fclose(fp);
+			strcpy(buf, *file);
+		} else if (path) { // TODO: to allow multiple paths separated by ":"
+			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
+			if ((fp = fopen(*file, "r")) == 0) buf[0] = 0;
+			else fclose(fp);
+		}
+		if (buf[0] == 0) return JS_THROW(Error, "[load] fail to locate the file");
+		v8::Handle<v8::String> source = k8_readfile(buf);
+		if (!k8_execute(source, v8::String::New(*file), false))
+			return JS_THROW(Error, "[load] fail to execute the file");
+	}
+	return v8::Undefined();
+}
+
 /*******************
  *** File object ***
  *******************/
 
 JS_METHOD(k8_file, args)
 {
-	v8::HandleScope handle_scope;
+	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
 	FILE *fpw = 0;
 	gzFile fpr = 0;
@@ -233,8 +340,16 @@ JS_METHOD(k8_istream_readline, args)
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
-	int dret, ret;
-	ret = ks_getuntil(obj, ks, KS_SEP_LINE, &dret);
+	int dret, ret, sep = KS_SEP_LINE;
+	if (args.Length()) {
+		if (args[0]->IsString()) {
+			v8::HandleScope scope2;
+			v8::String::AsciiValue str(args[0]);
+			sep = int(k8_cstr(str)[0]);
+		} else if (args[0]->IsInt32())
+			sep = args[0]->Int32Value();
+	}
+	ret = ks_getuntil(obj, ks, sep, &dret);
 	if (ret >= 0) return scope.Close(v8::String::New(ks->s.s, ks->s.l));
 	return v8::Null();
 }
@@ -262,6 +377,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	global->Set(v8::String::New("print"), v8::FunctionTemplate::New(k8_print));
 	global->Set(v8::String::New("exit"), v8::FunctionTemplate::New(k8_exit));
+	global->Set(v8::String::New("load"), v8::FunctionTemplate::New(k8_load));
 	global->Set(v8::String::New("version"), v8::FunctionTemplate::New(k8_version));
 	{
 		v8::HandleScope scope;
@@ -287,85 +403,6 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	return v8::Context::New(NULL, global);
 }
 
-void ReportException(v8::TryCatch *try_catch) // nearly the same as shell.cc
-{
-	v8::HandleScope handle_scope;
-	v8::String::AsciiValue exception(try_catch->Exception());
-	const char* exception_string = k8_cstr(exception);
-	v8::Handle<v8::Message> message = try_catch->Message();
-	if (message.IsEmpty()) {
-		// V8 didn't provide any extra information about this error; just print the exception.
-		fprintf(stderr, "%s\n", exception_string);
-	} else {
-		// Print (filename):(line number): (message).
-		v8::String::AsciiValue filename(message->GetScriptResourceName());
-		const char* filename_string = k8_cstr(filename);
-		int linenum = message->GetLineNumber();
-		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
-		// Print line of source code.
-		v8::String::AsciiValue sourceline(message->GetSourceLine());
-		const char *sourceline_string = k8_cstr(sourceline);
-		fprintf(stderr, "%s\n", sourceline_string);
-		// Print wavy underline (GetUnderline is deprecated).
-		int start = message->GetStartColumn();
-		for (int i = 0; i < start; i++) fputc(' ', stderr);
-		int end = message->GetEndColumn();
-		for (int i = start; i < end; i++) fputc('^', stderr);
-		fputc('\n', stderr);
-		v8::String::AsciiValue stack_trace(try_catch->StackTrace());
-		if (stack_trace.length() > 0) { // TODO: is the following redundant?
-			const char* stack_trace_string = k8_cstr(stack_trace);
-			fputs(stack_trace_string, stderr); fputc('\n', stderr);
-		}
-	}
-}
-
-static bool ExecuteString(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool prt_rst)
-{
-	v8::HandleScope handle_scope;
-	v8::TryCatch try_catch;
-	v8::Handle<v8::Script> script = v8::Script::Compile(source, name);
-	if (script.IsEmpty()) {
-		ReportException(&try_catch);
-		return false;
-	} else {
-		v8::Handle<v8::Value> result = script->Run();
-		if (result.IsEmpty()) {
-			assert(try_catch.HasCaught());
-			ReportException(&try_catch);
-			return false;
-		} else {
-			assert(!try_catch.HasCaught());
-			if (prt_rst && !result->IsUndefined()) {
-				v8::String::AsciiValue str(result);
-				puts(k8_cstr(str));
-			}
-			return true;
-		}
-	}
-}
-
-static v8::Handle<v8::String> ReadFile(const char *name)
-{
-	FILE* file = fopen(name, "rb");
-	if (file == NULL) return v8::Handle<v8::String>();
-
-	fseek(file, 0, SEEK_END);
-	int size = ftell(file);
-	rewind(file);
-
-	char* chars = new char[size + 1];
-	chars[size] = '\0';
-	for (int i = 0; i < size;) {
-		int read = static_cast<int>(fread(&chars[i], 1, size - i, file));
-		i += read;
-	}
-	fclose(file);
-	v8::Handle<v8::String> result = v8::String::New(chars, size);
-	delete[] chars;
-	return result;
-}
-
 static int RunMain(int argc, char* argv[])
 {
 	for (int i = 1; i < argc; i++) {
@@ -373,15 +410,15 @@ static int RunMain(int argc, char* argv[])
 		if ((strcmp(str, "-e") == 0 || strcmp(str, "-E") == 0) && i + 1 < argc) {
 			v8::Handle<v8::String> file_name = v8::String::New("unnamed");
 			v8::Handle<v8::String> source = v8::String::New(argv[++i]);
-			if (!ExecuteString(source, file_name, (strcmp(str, "-E") == 0))) return 1;
+			if (!k8_execute(source, file_name, (strcmp(str, "-E") == 0))) return 1;
 		} else {
 			v8::Handle<v8::String> file_name = v8::String::New(str);
-			v8::Handle<v8::String> source = ReadFile(str);
+			v8::Handle<v8::String> source = k8_readfile(str);
 			if (source.IsEmpty()) {
 				fprintf(stderr, "Error reading '%s'\n", str);
 				continue;
 			}
-			if (!ExecuteString(source, file_name, false)) return 1;
+			if (!k8_execute(source, file_name, false)) return 1;
 		}
 	}
 	return 0;
