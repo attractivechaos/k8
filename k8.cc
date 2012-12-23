@@ -1,12 +1,44 @@
+/**************************************************************************************
+ * The primary goal of this program is to extend the V8 Javascript engine with
+ * usable file I/O. It adds the 'File' object that writes an ordinary file or
+ * reads an ordinary file or a zlib compressed file, and the 'iStream' object
+ * that reads a line or a field by wrapping 'File'. 'iStream' potentially
+ * works with any object that supports reading an arbitrary length of data
+ * (e.g. from a socket or from a text buffer).
+ *
+ * The following demonstrates the extensions:
+ *
+ * load('k8.js'); // read 'k8.js' from the working directory or from $K8_LIBRARY_PATH
+ * print(5, "abc"); // print to stdout, TAB delimited
+ *
+ * var f = new File("myfile.txt.gz", "r"); // open "myfile.txt.gz" for reading
+ * print(f.read(10)); // read the first 10 characters from "myfile.txt.gz"
+ * f.close(); // close the file handler
+ *
+ * f = new File("newfile.txt", "w"); // open "newfile.txt" for writing
+ * f.write("abc"); // append "abc" to the file
+ * f.close();
+ *
+ * var line, s = new iStream(new File("myfile.txt.gz")); // open buffered reader
+ * while (line = s.readline()) print(line); // read line by line
+ * s.close(); // close the stream and the file handler at the same time
+ **************************************************************************************/
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <zlib.h>
 #include <v8.h>
 
+/************************************
+ *** Convenient macros from v8cgi ***
+ ************************************/
+
+// A V8 object can have multiple internal fields invisible to JS. The following 4 macros read and write these fields
 #define SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
 #define LOAD_PTR(_args, _index, _type) reinterpret_cast<_type>((_args).This()->GetAlignedPointerFromInternalField(_index))
 #define SAVE_VALUE(_args, _index, _val) (_args).This()->SetInternalField(_index, _val)
@@ -24,12 +56,12 @@
  *** Fundamental V8 routines ***
  *******************************/
 
-const char *k8_cstr(const v8::String::AsciiValue &str)
+const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
 {
 	return *str? *str : "<N/A>";
 }
 
-static void k8_exception(v8::TryCatch *try_catch)
+static void k8_exception(v8::TryCatch *try_catch) // Exception handling. Adapted from v8/shell.cc
 {
 	v8::HandleScope handle_scope;
 	v8::String::AsciiValue exception(try_catch->Exception());
@@ -62,7 +94,7 @@ static void k8_exception(v8::TryCatch *try_catch)
 	}
 }
 
-bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool prt_rst)
+bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool prt_rst) // Execute JS in a string. Adapted from v8/shell.cc
 {
 	v8::HandleScope handle_scope;
 	v8::TryCatch try_catch;
@@ -87,7 +119,7 @@ bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool 
 	}
 }
 
-v8::Handle<v8::String> k8_readfile(const char *name)
+v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Copied from v8/shell.cc
 {
 	FILE* file = fopen(name, "rb");
 	if (file == NULL) return v8::Handle<v8::String>();
@@ -112,7 +144,7 @@ v8::Handle<v8::String> k8_readfile(const char *name)
  *** New built-in functions ***
  ******************************/
 
-JS_METHOD(k8_print, args)
+JS_METHOD(k8_print, args) // print(): print to stdout; TAB demilited if multiple arguments are provided
 {
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
@@ -124,7 +156,7 @@ JS_METHOD(k8_print, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_exit, args)
+JS_METHOD(k8_exit, args) // exit()
 {
 	int exit_code = args[0]->Int32Value();
 	fflush(stdout); fflush(stderr);
@@ -132,12 +164,12 @@ JS_METHOD(k8_exit, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_version, args)
+JS_METHOD(k8_version, args) // version()
 {
 	return v8::String::New(v8::V8::GetVersion());
 }
 
-JS_METHOD(k8_load, args)
+JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches ONE path in $K8_LIBRARY_PATH
 {
 	char buf[1024], *path = getenv("K8_LIBRARY_PATH");
 	FILE *fp;
@@ -165,17 +197,17 @@ JS_METHOD(k8_load, args)
  *** File object ***
  *******************/
 
-JS_METHOD(k8_file, args)
+JS_METHOD(k8_file, args) // new File(fileName=stdin, mode="r").
 {
 	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
-	FILE *fpw = 0;
-	gzFile fpr = 0;
+	FILE *fpw = 0;  // write ordinary files
+	gzFile fpr = 0; // zlib transparently reads both ordinary and zlib/gzip files
 	if (args.Length()) {
-		SAVE_VALUE(args, 0, args[0]);
+		SAVE_VALUE(args, 0, args[0]); // InternalField[0] keeps the file name
 		v8::String::AsciiValue file(args[0]);
 		if (args.Length() >= 2) {
-			SAVE_VALUE(args, 1, args[1]);
+			SAVE_VALUE(args, 1, args[1]); // InternalField[1] keeps the mode
 			v8::String::AsciiValue mode(args[1]);
 			const char *cstr = k8_cstr(mode);
 			if (strchr(cstr, 'w')) fpw = fopen(k8_cstr(file), cstr);
@@ -191,12 +223,12 @@ JS_METHOD(k8_file, args)
 		SAVE_VALUE(args, 1, JS_STR("r"));
 		fpr = gzdopen(fileno(stdin), "r");
 	}
-	SAVE_PTR(args, 2, fpr);
-	SAVE_PTR(args, 3, fpw);
+	SAVE_PTR(args, 2, fpr); // InternalField[2] keeps the reading file pointer
+	SAVE_PTR(args, 3, fpw); // InternalField[3] keeps the writing file pointer
 	return args.This();
 }
 
-JS_METHOD(k8_file_close, args)
+JS_METHOD(k8_file_close, args) // File::close(). Close the file.
 {
 	gzFile fpr = LOAD_PTR(args, 2, gzFile);
 	FILE  *fpw = LOAD_PTR(args, 3, FILE*);
@@ -207,7 +239,7 @@ JS_METHOD(k8_file_close, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_file_read, args)
+JS_METHOD(k8_file_read, args) // File::read(n). Read $n characters and return as a string
 {
 	v8::HandleScope scope;
 	gzFile fp = LOAD_PTR(args, 2, gzFile);
@@ -220,7 +252,7 @@ JS_METHOD(k8_file_read, args)
 	return scope.Close(v8::String::New(buf, rdlen));
 }
 
-JS_METHOD(k8_file_write, args)
+JS_METHOD(k8_file_write, args) // File::write(str). Write $str and return the number of written characters
 {
 	v8::HandleScope scope;
 	FILE *fp = LOAD_PTR(args, 3, FILE*);
@@ -234,6 +266,7 @@ JS_METHOD(k8_file_write, args)
  *** iStream object ***
  **********************/
 
+// Read $len characters from JS $obj to $buf. $obj ought to have a "read(len)" method; otherwise the program will abort.
 static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
 {
 	v8::HandleScope scope;
@@ -245,6 +278,8 @@ static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
 	memcpy(buf, *vbuf, ret);
 	return ret;
 }
+
+// Bufferred stream, adapted from klib/kseq.h
 
 #define KS_SEP_SPACE 0 // isspace(): \t, \n, \v, \f, \r
 #define KS_SEP_TAB   1 // isspace() && !' '
@@ -324,7 +359,7 @@ static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, int delimiter,
 	return ks->s.l;
 }
 
-JS_METHOD(k8_istream, args)
+JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be available
 {
 	kstream_t *ks;
 	ASSERT_CONSTRUCTOR(args);
@@ -335,18 +370,18 @@ JS_METHOD(k8_istream, args)
 	return args.This();
 }
 
-JS_METHOD(k8_istream_readline, args)
+JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line. See inline comments for details
 {
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
 	int dret, ret, sep = KS_SEP_LINE;
-	if (args.Length()) {
-		if (args[0]->IsString()) {
+	if (args.Length()) { // by default, the delimitor is new line
+		if (args[0]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
 			v8::HandleScope scope2;
 			v8::String::AsciiValue str(args[0]);
 			sep = int(k8_cstr(str)[0]);
-		} else if (args[0]->IsInt32())
+		} else if (args[0]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
 			sep = args[0]->Int32Value();
 	}
 	ret = ks_getuntil(obj, ks, sep, &dret);
@@ -354,14 +389,14 @@ JS_METHOD(k8_istream_readline, args)
 	return v8::Null();
 }
 
-JS_METHOD(k8_istream_close, args)
+JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present, also call obj.close()
 {
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
 	ks_destroy(ks);
 	v8::Handle<v8::Value> func = obj->Get(v8::String::New("close"));
-	if (func->IsFunction())
+	if (func->IsFunction()) // if obj.close() is a function then call it
 		func.As<v8::Function>()->Call(obj, 0, 0);
 	SAVE_VALUE(args, 0, v8::Undefined());
 	SAVE_PTR(args, 1, 0);
@@ -375,11 +410,11 @@ JS_METHOD(k8_istream_close, args)
 static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 {
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
-	global->Set(v8::String::New("print"), v8::FunctionTemplate::New(k8_print));
-	global->Set(v8::String::New("exit"), v8::FunctionTemplate::New(k8_exit));
-	global->Set(v8::String::New("load"), v8::FunctionTemplate::New(k8_load));
-	global->Set(v8::String::New("version"), v8::FunctionTemplate::New(k8_version));
-	{
+	global->Set(JS_STR("print"), v8::FunctionTemplate::New(k8_print));
+	global->Set(JS_STR("exit"), v8::FunctionTemplate::New(k8_exit));
+	global->Set(JS_STR("load"), v8::FunctionTemplate::New(k8_load));
+	global->Set(JS_STR("version"), v8::FunctionTemplate::New(k8_version));
+	{ // add the 'File' object
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_file);
 		ft->SetClassName(JS_STR("File"));
@@ -390,57 +425,53 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
 		global->Set(v8::String::New("File"), ft);	
 	}
-	{
+	{ // add the 'iStream' object
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_istream);
 		ft->SetClassName(JS_STR("iStream"));
-		ft->InstanceTemplate()->SetInternalFieldCount(2);
+		ft->InstanceTemplate()->SetInternalFieldCount(2); // (File object, kstream_t*)
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("readline", v8::FunctionTemplate::New(k8_istream_readline));
 		pt->Set("close", v8::FunctionTemplate::New(k8_istream_close));
-		global->Set(v8::String::New("iStream"), ft);	
+		global->Set(JS_STR("iStream"), ft);	
 	}
 	return v8::Context::New(NULL, global);
-}
-
-static int RunMain(int argc, char* argv[])
-{
-	for (int i = 1; i < argc; i++) {
-		const char* str = argv[i];
-		if ((strcmp(str, "-e") == 0 || strcmp(str, "-E") == 0) && i + 1 < argc) {
-			v8::Handle<v8::String> file_name = v8::String::New("unnamed");
-			v8::Handle<v8::String> source = v8::String::New(argv[++i]);
-			if (!k8_execute(source, file_name, (strcmp(str, "-E") == 0))) return 1;
-		} else {
-			v8::Handle<v8::String> file_name = v8::String::New(str);
-			v8::Handle<v8::String> source = k8_readfile(str);
-			if (source.IsEmpty()) {
-				fprintf(stderr, "Error reading '%s'\n", str);
-				continue;
-			}
-			if (!k8_execute(source, file_name, false)) return 1;
-		}
-	}
-	return 0;
 }
 
 int main(int argc, char* argv[])
 {
 	v8::V8::SetFlagsFromCommandLine(&argc, argv, true);
-	int ret;
+	int ret = 0;
 	if (argc == 1) {
-		fprintf(stderr, "Usage: k8 [-e jsCode] [-E jsCode] <src.js>\n");
+		fprintf(stderr, "Usage: k8 [-e jsSrc] [-E jsSrc] <src.js> [arguments]\n");
 		return 1;
 	}
 	{
-		v8::HandleScope handle_scope;
+		v8::HandleScope scope;
 		v8::Persistent<v8::Context> context = CreateShellContext();
 		if (context.IsEmpty()) {
 			fprintf(stderr, "Error creating context\n");
 			return 1;
 		}
 		context->Enter();
-		ret = RunMain(argc, argv);
+		int i, c;
+		while ((c = getopt(argc, argv, "e:E:")) >= 0) // parse k8 related command line options
+			if (c == 'e' || c == 'E') {
+				if (!k8_execute(JS_STR(optarg), JS_STR("CLI"), (c == 'E'))) { // note the difference between 'e' and 'E'
+					ret = 1;
+					break;
+				}
+			}
+		if (!ret && optind != argc) {
+			if (optind + 1 < argc) { // set command line arguments[]
+				v8::HandleScope scope2;
+				v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);
+				for (i = optind + 1; i < argc; ++i)
+					args->Set(v8::Integer::New(i - optind - 1), JS_STR(argv[i]));
+				context->Global()->Set(JS_STR("arguments"), args);
+			}
+			if (!k8_execute(k8_readfile(argv[optind]), JS_STR(argv[optind]), false)) ret = 1;
+		}
 		context->Exit();
 		context.Dispose();
 	}
