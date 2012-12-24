@@ -402,7 +402,6 @@ static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
 typedef struct __kstream_t {
 	unsigned char *buf;
 	int begin, end, is_eof, buf_size;
-	struct { long l, m; char *s; } s;
 } kstream_t;
 
 #define ks_eof(ks) ((ks)->is_eof && (ks)->begin >= (ks)->end)
@@ -418,13 +417,13 @@ static inline kstream_t *ks_init(int __bufsize)
 
 static inline void ks_destroy(kstream_t *ks)
 { 
-	if (ks) { free(ks->buf); free(ks->s.s); free(ks); }
+	if (ks) { free(ks->buf); free(ks); }
 }
 
-static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, int delimiter, int *dret)
+static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret)
 {
 	if (dret) *dret = 0;
-	ks->s.l = 0;
+	kv->n = 0;
 	if (ks->begin >= ks->end && ks->is_eof) return -1;
 	for (;;) {
 		int i;
@@ -449,25 +448,25 @@ static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, int delimiter,
 			for (i = ks->begin; i < ks->end; ++i)
 				if (isspace(ks->buf[i]) && ks->buf[i] != ' ') break;
 		} else i = 0; /* never come to here! */
-		if (ks->s.m - ks->s.l < i - ks->begin + 1) {
-			ks->s.m = ks->s.l + (i - ks->begin) + 1;
-			kroundup32(ks->s.m);
-			ks->s.s = (char*)realloc(ks->s.s, ks->s.m);
+		if (kv->m - kv->n < i - ks->begin + 1) {
+			kv->m = kv->n + (i - ks->begin) + 1;
+			kroundup32(kv->m);
+			kv->a = (uint8_t*)realloc(kv->a, kv->m);
 		}
-		memcpy(ks->s.s + ks->s.l, ks->buf + ks->begin, i - ks->begin);
-		ks->s.l = ks->s.l + (i - ks->begin);
+		memcpy(kv->a + kv->n, ks->buf + ks->begin, i - ks->begin);
+		kv->n = kv->n + (i - ks->begin);
 		ks->begin = i + 1;
 		if (i < ks->end) {
 			if (dret) *dret = ks->buf[i];
 			break;
 		}
 	}
-	if (ks->s.s == 0) {
-		ks->s.m = 1;
-		ks->s.s = (char*)calloc(1, 1);
-	} else if (delimiter == KS_SEP_LINE && ks->s.l > 1 && ks->s.s[ks->s.l-1] == '\r') --ks->s.l;
-	ks->s.s[ks->s.l] = '\0';
-	return ks->s.l;
+	if (kv->a == 0) {
+		kv->m = 1;
+		kv->a = (uint8_t*)calloc(1, 1);
+	} else if (delimiter == KS_SEP_LINE && kv->n > 1 && kv->a[kv->n-1] == '\r') --kv->n;
+	kv->a[kv->n] = '\0';
+	return kv->n;
 }
 
 JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be available
@@ -478,7 +477,6 @@ JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be availab
 	ks = ks_init(65536);
 	SAVE_VALUE(args, 0, args[0]);
 	SAVE_PTR(args, 1, ks);
-	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	return args.This();
 }
 
@@ -488,43 +486,19 @@ JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
 	int dret, ret, sep = KS_SEP_LINE;
-	if (args.Length()) { // by default, the delimitor is new line
-		if (args[0]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
-			v8::String::AsciiValue str(args[0]);
+	if (!args.Length() || !args[0]->IsObject()) return v8::Null(); // TODO: when there are no parameters, skip a line
+	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
+	kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
+	if (args.Length() > 1) { // by default, the delimitor is new line
+		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
+			v8::String::AsciiValue str(args[1]);
 			sep = int(k8_cstr(str)[0]);
-		} else if (args[0]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
-			sep = args[0]->Int32Value();
+		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
+			sep = args[1]->Int32Value();
 	}
-	ret = ks_getuntil(obj, ks, sep, &dret);
-	if (ret >= 0) return scope.Close(v8::String::New(ks->s.s, ks->s.l));
-	return v8::Null();
-}
-
-JS_METHOD(k8_istream_fastline, args) // iStream::readline(sep=line). Read a line. See inline comments for details
-{
-	v8::HandleScope scope;
-	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
-	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
-	int dret, ret, sep = KS_SEP_LINE;
-	if (args.Length()) { // by default, the delimitor is new line
-		if (args[0]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
-			v8::String::AsciiValue str(args[0]);
-			sep = int(k8_cstr(str)[0]);
-		} else if (args[0]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
-			sep = args[0]->Int32Value();
-	}
-	ret = ks_getuntil(obj, ks, sep, &dret);
-	if (ret >= 0) {
-		args.This()->SetIndexedPropertiesToExternalArrayData((uint8_t*)ks->s.s, v8::kExternalUnsignedByteArray, ks->s.l);
-		return scope.Close(v8::Integer::New(ks->s.l));
-	} else return scope.Close(v8::Integer::New(-1));
-}
-
-JS_METHOD(k8_istream_toString, args)
-{
-	v8::HandleScope scope;
-	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
-	return scope.Close(v8::String::New((char*)ks->s.s, ks->s.l));
+	ret = ks_getuntil(obj, ks, kv, sep, &dret);
+	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
+	return scope.Close(v8::Integer::New(ret));
 }
 
 JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present, also call obj.close()
@@ -584,8 +558,6 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		ft->InstanceTemplate()->SetInternalFieldCount(2); // (File object, kstream_t*)
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("readline", v8::FunctionTemplate::New(k8_istream_readline));
-		pt->Set("fastline", v8::FunctionTemplate::New(k8_istream_fastline));
-		pt->Set("toString", v8::FunctionTemplate::New(k8_istream_toString));
 		pt->Set("close", v8::FunctionTemplate::New(k8_istream_close));
 		global->Set(JS_STR("iStream"), ft);	
 	}
