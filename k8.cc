@@ -220,17 +220,16 @@ JS_METHOD(k8_bytes, args)
 	return args.This();
 }
 
-static inline bool kv_resize(kvec8_t *a, int32_t m)
+static inline void kv_resize(kvec8_t *a, int32_t m)
 {
 	a->n = m;
 	kroundup32(m);
 	if (a->m != m) {
 		a->a = (uint8_t*)realloc(a->a, m);
 		if (a->m < m) memset(&a->a[a->m], 0, m - a->m);
+		v8::V8::AdjustAmountOfExternalAllocatedMemory(m - a->m);
 		a->m = m;
-		return true;
 	}
-	return false;
 }
 
 JS_METHOD(k8_bytes_size, args)
@@ -249,7 +248,9 @@ JS_METHOD(k8_bytes_destroy, args)
 	v8::HandleScope scope;
 	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
-	free(a->a); free(a);
+	free(a->a);
+	v8::V8::AdjustAmountOfExternalAllocatedMemory(-a->m);
+	free(a);
 	SAVE_PTR(args, 0, 0);
 	return v8::Undefined();
 }
@@ -469,6 +470,7 @@ JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be availab
 	ASSERT_CONSTRUCTOR(args);
 	if (args.Length() == 0) return v8::Null();
 	ks = ks_init(65536);
+	v8::V8::AdjustAmountOfExternalAllocatedMemory(65536);
 	SAVE_VALUE(args, 0, args[0]);
 	SAVE_PTR(args, 1, ks);
 	return args.This();
@@ -500,6 +502,7 @@ JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	ks_destroy(LOAD_PTR(args, 1, kstream_t*));
+	v8::V8::AdjustAmountOfExternalAllocatedMemory(-65536);
 	v8::Handle<v8::Value> func = obj->Get(v8::String::New("close"));
 	if (func->IsFunction()) func.As<v8::Function>()->Call(obj, 0, 0); // if obj.close() is a function then call it
 	SAVE_VALUE(args, 0, v8::Undefined());
