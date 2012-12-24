@@ -53,10 +53,9 @@ All the following objects manage some memory outside the V8 garbage collector.
 It is important to call the `close()` or the `destroy()` methods to deallocate
 the memory to avoid memory leaks.
 
-Line reading in the latest K8 should be a little slower than in the initial
-release, because the separation of `File` and `iStream` adds overhead.
-Nonetheless, the current implementation is more flexible and the speed
-difference should be minor.
+A note is that both `File` and `iStream` have a `readline` method. The former
+is faster as it directly operates data in C; the latter is more flexible and
+can be potentially used with other objects.
 
 ###The Bytes Object
 
@@ -94,6 +93,8 @@ Here is an example:
 	File.prototype.read(len)
 	// Write $str and return the number of written bytes
 	File.prototype.write(str)
+	// Read a line; see also iStream.prototype.readline() below
+	File.prototype.readline(bytes, sep)
 	// Close the file
 	File.prototype.close()
 
