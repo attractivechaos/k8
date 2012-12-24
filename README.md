@@ -116,10 +116,14 @@ into lines or fields.
 
 Here is an example:
 
-	var bytes = new Bytes()
-	var stream = new iStream(new File('myfile.txt'))
+	var bytes = new Bytes(), stream = new iStream(new File('myfile.txt'))
 	while (stream.readline(bytes) >= 0) print(bytes)
 	stream.close()
+	// The following also works and is faster.
+	var file = new File('myfile.txt')
+	while (file.readline(bytes) >= 0) print(bytes)
+	file.close()
+	bytes.destroy()
 
 
 [1]: http://code.google.com/p/v8/
