@@ -21,7 +21,7 @@
  *
  * var line = new Bytes();
  * var s = new iStream(new File("myfile.txt.gz")); // open buffered reader
- * while (s.readline(line)) print(line.toString()); // read line by line
+ * while (s.readline(line) >= 0) print(line.toString()); // read line by line
  * s.close(); // close the stream and the file handler at the same time
  **************************************************************************************/
 
