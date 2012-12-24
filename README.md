@@ -98,13 +98,13 @@ Here is an example:
 	stream.close()
 
 
-[1] http://code.google.com/p/v8/
-[2] http://nodejs.org/
-[3] https://github.com/tlrobinson/narwhal
-[4] http://silkjs.net/
-[5] http://code.google.com/p/teajs/
-[6] https://github.com/samlecuyer/sorrow.js
-[7] http://nodejs.org/api/fs.html
-[8] http://nodejs.org/api/stream.html
-[9] http://www.commonjs.org/specs/
-[10] http://docs.oracle.com/javase/6/docs/api/java/io/BufferedReader.html
+[1]: http://code.google.com/p/v8/
+[2]: http://nodejs.org/
+[3]: https://github.com/tlrobinson/narwhal
+[4]: http://silkjs.net/
+[5]: http://code.google.com/p/teajs/
+[6]: https://github.com/samlecuyer/sorrow.js
+[7]: http://nodejs.org/api/fs.html
+[8]: http://nodejs.org/api/stream.html
+[9]: http://www.commonjs.org/specs/
+[10]: http://docs.oracle.com/javase/6/docs/api/java/io/BufferedReader.html
