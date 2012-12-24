@@ -11,25 +11,23 @@ the support of byte arrays, file I/O and buffered input stream.
 To some extent, [Node.js][2], [Narwhal][3], [SilkJS][4], [TeaJS][5] and
 [Sorrow.js][6] are all Javascript shells. They not only provide binary storage
 and file I/O, the features available in K8, but also implement much richer
-functionality such as network I/O and database binding. Why do we need K8?
+functionality such as network I/O and database binding. However, most of the
+existing Javascript shells are designed for server-side applications, but not
+for general use cases as we do with Perl/Ruby/Python.  Take the popular Node.js
+as an example. Node.js mixes file I/O and file system operations, two distinct
+concepts, in one [File System module][7].  In the module, we can either read an
+entire file or a fixed-length data blob, but are unable to read a line as is
+provided by most other programming languages. Many other JS shell
+implementations follow the [CommonJS APIs][9], which have a similar problem: no
+usable APIs for general-purpose file I/O. After all these efforts, on file I/O,
+we even do not have a JS shell matching the usability of C, let alone
+high-level programming languages such as Perl and Python.
 
-Most of the existing Javascript shells are designed for server-side
-applications, but not for general use cases as we do with Perl/Ruby/Python.
-Take the popular Node.js as an example. Node.js mixes file I/O and file system
-operations, two distinct concepts, in one [File System module][7].  In the
-module, we can either read an entire file or a fixed-length data blob, but are
-unable to read a line as is provided by most other programming languages. Many
-other JS shell implementations follow the [CommonJS APIs][9], which have a
-similar problem: no usable APIs for general-purpose file I/O. After all these
-efforts, on file I/O, we even do not have a JS shell matching the usability of
-C, let alone high-level programming languages such as Perl and Python.
-
-K8 aims to provide C-like file I/O APIs. It provides a `File` object for
-low-level file access and a `iStream` object that works in a similar way to
-Java's [BufferedReader][10], wrapping any read-only stream.
-
-K8 also implements flexible byte arrays. This is partly to resolve my concern
-about the lack of mutable strings in Javascript.
+K8 aims to provide C-like file I/O APIs. It adds a `File` object for low-level
+file access and a `iStream` object that works in a similar way to Java's
+[BufferedReader][10], wrapping any read-only stream. K8 also implements
+flexible byte arrays. This is partly to resolve my concern about the lack of
+mutable strings in Javascript.
 
 
 API Documentations
