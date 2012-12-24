@@ -19,8 +19,9 @@
  * f.write("abc"); // append "abc" to the file
  * f.close();
  *
- * var line, s = new iStream(new File("myfile.txt.gz")); // open buffered reader
- * while (line = s.readline()) print(line); // read line by line
+ * var line = new Bytes();
+ * var s = new iStream(new File("myfile.txt.gz")); // open buffered reader
+ * while (s.readline(line)) print(line.toString()); // read line by line
  * s.close(); // close the stream and the file handler at the same time
  **************************************************************************************/
 
@@ -253,48 +254,41 @@ JS_METHOD(k8_bytes_destroy, args)
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_bytes_get, args)
-{
-	v8::HandleScope scope;
-	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
-	if (args.Length() == 0) return v8::Undefined();
-	long i = args[0]->Int32Value();
-	return i >= a->n? v8::Undefined() : scope.Close(v8::Integer::New(a->a[i]));
-}
-
 JS_METHOD(k8_bytes_set, args)
 {
+#define _extend_vec_(_l_) do { \
+		if (pos + (int32_t)(_l_) >= a->n) { \
+			kv_resize(a, pos + (_l_)); \
+			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n); \
+		} \
+		cnt = (_l_); \
+	} while (0)
+
 	v8::HandleScope scope;
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length() == 0) return v8::Undefined();
 	int cnt = 0;
 	int32_t pos = args.Length() >= 2? args[1]->Int32Value() : a->n;
 	if (args[0]->IsUint32()) {
-		if (pos + 1 >= a->n) {
-			kv_resize(a, pos + 1);
-			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
-		}
+		_extend_vec_(1);
 		a->a[pos] = args[0]->Int32Value();
-		cnt = 1;
 	} else if (args[0]->IsString()) {
 		v8::String::AsciiValue str(args[0]);
 		const char *cstr = *str;
-		if (pos + str.length() >= a->n) {
-			kv_resize(a, pos + str.length());
-			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
-		}
-		for (int i = 0; i < str.length(); ++i)
-			a->a[i+pos] = uint8_t(cstr[i]);
+		_extend_vec_(str.length());
+		for (int i = 0; i < str.length(); ++i) a->a[i+pos] = uint8_t(cstr[i]);
 	} else if (args[0]->IsArray()) {
 		v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(args[0]);
-		if (pos + array->Length() >= (unsigned)a->n) {
-			kv_resize(a, pos + array->Length());
-			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
-		}
+		_extend_vec_(array->Length());
 		for (unsigned i = 0; i < array->Length(); ++i) {
 			v8::Handle<v8::Value> tmp = array->Get(v8::Integer::New(i));
 			a->a[i+pos] = tmp->IsUint32()? tmp->Int32Value() : 0;
 		}
+	} else if (args[0]->IsObject()) {
+		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
+		kvec8_t *a2 = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
+		_extend_vec_(a2->n);
+		for (int32_t i = 0; i < a2->n; ++i) a->a[i+pos] = a2->a[i];
 	}
 	return scope.Close(v8::Integer::New(cnt));
 }
@@ -487,7 +481,7 @@ JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
 	int dret, ret, sep = KS_SEP_LINE;
 	if (!args.Length() || !args[0]->IsObject()) return v8::Null(); // TODO: when there are no parameters, skip a line
-	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
+	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 	kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
 	if (args.Length() > 1) { // by default, the delimitor is new line
 		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
@@ -505,14 +499,11 @@ JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present
 {
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
-	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
-	ks_destroy(ks);
+	ks_destroy(LOAD_PTR(args, 1, kstream_t*));
 	v8::Handle<v8::Value> func = obj->Get(v8::String::New("close"));
-	if (func->IsFunction()) // if obj.close() is a function then call it
-		func.As<v8::Function>()->Call(obj, 0, 0);
+	if (func->IsFunction()) func.As<v8::Function>()->Call(obj, 0, 0); // if obj.close() is a function then call it
 	SAVE_VALUE(args, 0, v8::Undefined());
 	SAVE_PTR(args, 1, 0);
-	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	return v8::Undefined();
 }
 
@@ -534,10 +525,9 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		ft->InstanceTemplate()->SetInternalFieldCount(2);
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
-		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
-		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
-		pt->Set("get", v8::FunctionTemplate::New(k8_bytes_get));
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
+		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
 		global->Set(JS_STR("Bytes"), ft);	
 	}
 	{ // add the 'File' object
