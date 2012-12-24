@@ -246,6 +246,7 @@ JS_METHOD(k8_bytes_size, args)
 JS_METHOD(k8_bytes_destroy, args)
 {
 	v8::HandleScope scope;
+	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	free(a->a); free(a);
 	SAVE_PTR(args, 0, 0);
@@ -477,6 +478,7 @@ JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be availab
 	ks = ks_init(65536);
 	SAVE_VALUE(args, 0, args[0]);
 	SAVE_PTR(args, 1, ks);
+	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	return args.This();
 }
 
@@ -488,7 +490,6 @@ JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line
 	int dret, ret, sep = KS_SEP_LINE;
 	if (args.Length()) { // by default, the delimitor is new line
 		if (args[0]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
-			v8::HandleScope scope2;
 			v8::String::AsciiValue str(args[0]);
 			sep = int(k8_cstr(str)[0]);
 		} else if (args[0]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
@@ -497,6 +498,33 @@ JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line
 	ret = ks_getuntil(obj, ks, sep, &dret);
 	if (ret >= 0) return scope.Close(v8::String::New(ks->s.s, ks->s.l));
 	return v8::Null();
+}
+
+JS_METHOD(k8_istream_fastline, args) // iStream::readline(sep=line). Read a line. See inline comments for details
+{
+	v8::HandleScope scope;
+	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
+	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
+	int dret, ret, sep = KS_SEP_LINE;
+	if (args.Length()) { // by default, the delimitor is new line
+		if (args[0]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
+			v8::String::AsciiValue str(args[0]);
+			sep = int(k8_cstr(str)[0]);
+		} else if (args[0]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
+			sep = args[0]->Int32Value();
+	}
+	ret = ks_getuntil(obj, ks, sep, &dret);
+	if (ret >= 0) {
+		args.This()->SetIndexedPropertiesToExternalArrayData((uint8_t*)ks->s.s, v8::kExternalUnsignedByteArray, ks->s.l);
+		return scope.Close(v8::Integer::New(ks->s.l));
+	} else return scope.Close(v8::Integer::New(-1));
+}
+
+JS_METHOD(k8_istream_toString, args)
+{
+	v8::HandleScope scope;
+	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
+	return scope.Close(v8::String::New((char*)ks->s.s, ks->s.l));
 }
 
 JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present, also call obj.close()
@@ -510,6 +538,7 @@ JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present
 		func.As<v8::Function>()->Call(obj, 0, 0);
 	SAVE_VALUE(args, 0, v8::Undefined());
 	SAVE_PTR(args, 1, 0);
+	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	return v8::Undefined();
 }
 
@@ -555,6 +584,8 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		ft->InstanceTemplate()->SetInternalFieldCount(2); // (File object, kstream_t*)
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("readline", v8::FunctionTemplate::New(k8_istream_readline));
+		pt->Set("fastline", v8::FunctionTemplate::New(k8_istream_fastline));
+		pt->Set("toString", v8::FunctionTemplate::New(k8_istream_toString));
 		pt->Set("close", v8::FunctionTemplate::New(k8_istream_close));
 		global->Set(JS_STR("iStream"), ft);	
 	}
