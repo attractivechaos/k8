@@ -25,6 +25,8 @@
  * s.close(); // close the stream and the file handler at the same time
  **************************************************************************************/
 
+#define K8_VERSION "0.1.1" // known to work with V8-3.16.1
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>

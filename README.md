@@ -4,7 +4,9 @@ FAQ
 ####1. What is K8?
 
 K8 is a Javascript shell based on Google's [V8 Javascript engine][1]. It adds
-the support of byte arrays, file I/O and buffered input stream.
+the support of flexible byte arrays, file I/O and convenient buffered input
+stream. K8 is implemented in one C++ source file. The only dependency is V8 and
+zlib.
 
 ####2. There are many Javascript shells with much richer features. What makes K8 special?
 
@@ -29,9 +31,27 @@ file access and a `iStream` object that works in a similar way to Java's
 flexible byte arrays. This is partly to resolve my concern about the lack of
 mutable strings in Javascript.
 
+####3. How to compile K8? Are there compiled binaries?
+
+You need to first compile V8 and then compile and link K8. Here is the full procedure:
+
+	git clone https://github.com/v8/v8             # download V8
+	(cd v8; make dependencies; make x64.release)   # compile V8
+	g++ -O2 -Wall -o k8 -Iv8/include k8.cc -lpthread -lz v8/out/*/libv8_{base,snapshot}.a
+
+The two `libv8*.a` files should always be placed somewhere in `v8/out`, but
+maybe in a deeper directory, depending on the OS.
+
+Alternatively, you may download the compiled binaries for Mac and Linux from
+[SourceForge][11]. The source code is also included.
+
 
 API Documentations
 ------------------
+
+All the following objects manage some memory outside the V8 garbage collector.
+It is important to call the `close()` or the `destroy()` methods to deallocate
+the memory to avoid memory leaks.
 
 ###The Bytes Object
 
@@ -54,7 +74,7 @@ API Documentations
 Here is an example:
 
     var ba = new Bytes();
-	ba.set("foo"); ba.set([0x20, 0x2c]); ba.set("bar"); ba.set('F', 0);
+	ba.set("foo"); ba.set([0x20, 0x20]); ba[4]=0x2c; ba.set("bar"); ba.set('F', 0);
 	print(ba.size(), ba.toString())
 	ba.destroy();
 
@@ -106,3 +126,4 @@ Here is an example:
 [8]: http://nodejs.org/api/stream.html
 [9]: http://www.commonjs.org/specs/
 [10]: http://docs.oracle.com/javase/6/docs/api/java/io/BufferedReader.html
+[11]: https://sourceforge.net/projects/k8-shell/files/
