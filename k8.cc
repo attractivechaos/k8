@@ -25,7 +25,7 @@
  * s.close(); // close the stream and the file handler at the same time
  **************************************************************************************/
 
-#define K8_VERSION "0.1.1" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.2" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -303,93 +303,9 @@ JS_METHOD(k8_bytes_toString, args)
 	return scope.Close(v8::String::New((char*)a->a, a->n));
 }
 
-/*******************
- *** File object ***
- *******************/
-
-JS_METHOD(k8_file, args) // new File(fileName=stdin, mode="r").
-{
-	v8::HandleScope scope;
-	ASSERT_CONSTRUCTOR(args);
-	FILE *fpw = 0;  // write ordinary files
-	gzFile fpr = 0; // zlib transparently reads both ordinary and zlib/gzip files
-	if (args.Length()) {
-		SAVE_VALUE(args, 0, args[0]); // InternalField[0] keeps the file name
-		v8::String::AsciiValue file(args[0]);
-		if (args.Length() >= 2) {
-			SAVE_VALUE(args, 1, args[1]); // InternalField[1] keeps the mode
-			v8::String::AsciiValue mode(args[1]);
-			const char *cstr = k8_cstr(mode);
-			if (strchr(cstr, 'w')) fpw = fopen(k8_cstr(file), cstr);
-			else fpr = gzopen(k8_cstr(file), cstr);
-		} else {
-			SAVE_VALUE(args, 1, JS_STR("r"));
-			fpr = gzopen(*file, "r");
-		}
-		if (fpr == 0 && fpw == 0)
-			return JS_THROW(Error, "[File] Fail to open the file");
-	} else {
-		SAVE_VALUE(args, 0, JS_STR("-"));
-		SAVE_VALUE(args, 1, JS_STR("r"));
-		fpr = gzdopen(fileno(stdin), "r");
-	}
-	SAVE_PTR(args, 2, fpr); // InternalField[2] keeps the reading file pointer
-	SAVE_PTR(args, 3, fpw); // InternalField[3] keeps the writing file pointer
-	return args.This();
-}
-
-JS_METHOD(k8_file_close, args) // File::close(). Close the file.
-{
-	gzFile fpr = LOAD_PTR(args, 2, gzFile);
-	FILE  *fpw = LOAD_PTR(args, 3, FILE*);
-	if (fpr) gzclose(fpr);
-	if (fpw) fclose(fpw);
-	SAVE_PTR(args, 2, 0);
-	SAVE_PTR(args, 3, 0);
-	return v8::Undefined();
-}
-
-JS_METHOD(k8_file_read, args) // File::read(n). Read $n characters and return as a string
-{
-	v8::HandleScope scope;
-	gzFile fp = LOAD_PTR(args, 2, gzFile);
-	if (args.Length() == 0) return v8::Null();
-	long len, rdlen;
-	v8::String::AsciiValue clen(args[0]);
-	len = atol(k8_cstr(clen));
-	char buf[len];
-	rdlen = gzread(fp, buf, len);
-	return scope.Close(v8::String::New(buf, rdlen));
-}
-
-JS_METHOD(k8_file_write, args) // File::write(str). Write $str and return the number of written characters
-{
-	v8::HandleScope scope;
-	FILE *fp = LOAD_PTR(args, 3, FILE*);
-	if (args.Length() == 0) return scope.Close(v8::Integer::New(0));
-	v8::String::AsciiValue vbuf(args[0]);
-	long len = fwrite(*vbuf, 1, vbuf.length(), fp);
-	return scope.Close(v8::Integer::New(len));
-}
-
-/**********************
- *** iStream object ***
- **********************/
-
-// Read $len characters from JS $obj to $buf. $obj ought to have a "read(len)" method; otherwise the program will abort.
-static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
-{
-	v8::HandleScope scope;
-	v8::Handle<v8::Function> func = obj->Get(v8::String::New("read")).As<v8::Function>();
-	v8::Handle<v8::Value> arg = v8::Integer::New(len);
-	v8::Handle<v8::Value> rst = func->Call(obj, 1, &arg);
-	v8::String::AsciiValue vbuf(rst);
-	long ret = vbuf.length();
-	memcpy(buf, *vbuf, ret);
-	return ret;
-}
-
-// Bufferred stream, adapted from klib/kseq.h
+/**********************************************
+ *** Generic stream buffer from klib/kseq.h ***
+ **********************************************/
 
 #define KS_SEP_SPACE 0 // isspace(): \t, \n, \v, \f, \r
 #define KS_SEP_TAB   1 // isspace() && !' '
@@ -417,7 +333,8 @@ static inline void ks_destroy(kstream_t *ks)
 	if (ks) { free(ks->buf); free(ks); }
 }
 
-static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret)
+template<typename file_t, typename reader_t>
+static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, reader_t reader)
 {
 	if (dret) *dret = 0;
 	kv->n = 0;
@@ -427,7 +344,7 @@ static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, kvec8_t *kv, i
 		if (ks->begin >= ks->end) {
 			if (!ks->is_eof) {
 				ks->begin = 0;
-				ks->end = obj_read(fp, ks->buf, ks->buf_size);
+				ks->end = reader(fp, ks->buf, ks->buf_size);
 				if (ks->end < ks->buf_size) ks->is_eof = 1;
 				if (ks->end == 0) break;
 			} else break;
@@ -466,13 +383,141 @@ static int ks_getuntil(v8::Handle<v8::Object> &fp, kstream_t *ks, kvec8_t *kv, i
 	return kv->n;
 }
 
+#define KS_BUF_SIZE 0x10000
+
+/*******************
+ *** File object ***
+ *******************/
+
+JS_METHOD(k8_file, args) // new File(fileName=stdin, mode="r").
+{
+	v8::HandleScope scope;
+	ASSERT_CONSTRUCTOR(args);
+	FILE *fpw = 0;  // write ordinary files
+	gzFile fpr = 0; // zlib transparently reads both ordinary and zlib/gzip files
+	if (args.Length()) {
+		SAVE_VALUE(args, 0, args[0]); // InternalField[0] keeps the file name
+		v8::String::AsciiValue file(args[0]);
+		if (args.Length() >= 2) {
+			SAVE_VALUE(args, 1, args[1]); // InternalField[1] keeps the mode
+			v8::String::AsciiValue mode(args[1]);
+			const char *cstr = k8_cstr(mode);
+			if (strchr(cstr, 'w')) fpw = fopen(k8_cstr(file), cstr);
+			else fpr = gzopen(k8_cstr(file), cstr);
+		} else {
+			SAVE_VALUE(args, 1, JS_STR("r"));
+			fpr = gzopen(*file, "r");
+		}
+		if (fpr == 0 && fpw == 0)
+			return JS_THROW(Error, "[File] Fail to open the file");
+	} else {
+		SAVE_VALUE(args, 0, JS_STR("-"));
+		SAVE_VALUE(args, 1, JS_STR("r"));
+		fpr = gzdopen(fileno(stdin), "r");
+	}
+	SAVE_PTR(args, 2, fpr); // InternalField[2] keeps the reading file pointer
+	SAVE_PTR(args, 3, fpw); // InternalField[3] keeps the writing file pointer
+	if (fpr) {
+		kstream_t *ks = ks_init(KS_BUF_SIZE);
+		v8::V8::AdjustAmountOfExternalAllocatedMemory(KS_BUF_SIZE);
+		SAVE_PTR(args, 4, ks);
+	} else SAVE_PTR(args, 4, 0);
+	return args.This();
+}
+
+JS_METHOD(k8_file_close, args) // File::close(). Close the file.
+{
+	gzFile fpr = LOAD_PTR(args, 2, gzFile);
+	FILE  *fpw = LOAD_PTR(args, 3, FILE*);
+	if (fpr) {
+		gzclose(fpr);
+		kstream_t *ks = LOAD_PTR(args, 4, kstream_t*);
+		ks_destroy(ks);
+	}
+	if (fpw) fclose(fpw);
+	SAVE_PTR(args, 2, 0); SAVE_PTR(args, 3, 0); SAVE_PTR(args, 4, 0);
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_file_read, args) // File::read(n). Read $n characters and return as a string
+{
+	v8::HandleScope scope;
+	gzFile fp = LOAD_PTR(args, 2, gzFile);
+	kstream_t *ks = LOAD_PTR(args, 4, kstream_t*);
+	if (fp == 0) return JS_ERROR("file is not open for read");
+	if (ks->end) return JS_ERROR("read() cannot be used after readline() due to an implementation limitation");
+	if (args.Length() == 0) return v8::Null();
+	long len, rdlen;
+	v8::String::AsciiValue clen(args[0]);
+	len = atol(k8_cstr(clen));
+	char buf[len];
+	rdlen = gzread(fp, buf, len);
+	return scope.Close(v8::String::New(buf, rdlen));
+}
+
+JS_METHOD(k8_file_write, args) // File::write(str). Write $str and return the number of written characters
+{
+	v8::HandleScope scope;
+	FILE *fp = LOAD_PTR(args, 3, FILE*);
+	if (fp == 0) return JS_ERROR("file is not open for write");
+	if (args.Length() == 0) return scope.Close(v8::Integer::New(0));
+	v8::String::AsciiValue vbuf(args[0]);
+	long len = fwrite(*vbuf, 1, vbuf.length(), fp);
+	return scope.Close(v8::Integer::New(len));
+}
+
+static int get_sep(const v8::Arguments &args)
+{
+	int sep = KS_SEP_LINE;
+	if (args.Length() > 1) { // by default, the delimitor is new line
+		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
+			v8::String::AsciiValue str(args[1]);
+			sep = int(k8_cstr(str)[0]);
+		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
+			sep = args[1]->Int32Value();
+	}
+	return sep;
+}
+
+JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
+{
+	v8::HandleScope scope;
+	gzFile fpr = LOAD_PTR(args, 2, gzFile);
+	kstream_t *ks = LOAD_PTR(args, 4, kstream_t*);
+	if (fpr == 0) return JS_ERROR("file is not open for read");
+	if (!args.Length() || !args[0]->IsObject()) return v8::Null(); // TODO: when there are no parameters, skip a line
+	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
+	kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
+	int dret, ret, sep = get_sep(args);
+	ret = ks_getuntil(fpr, ks, kv, sep, &dret, gzread);
+	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
+	return scope.Close(v8::Integer::New(ret));
+}
+
+/**********************
+ *** iStream object ***
+ **********************/
+
+// Read $len characters from JS $obj to $buf. $obj ought to have a "read(len)" method; otherwise the program will abort.
+static long obj_read(v8::Handle<v8::Object> &obj, void *buf, long len)
+{
+	v8::HandleScope scope;
+	v8::Handle<v8::Function> func = obj->Get(v8::String::New("read")).As<v8::Function>();
+	v8::Handle<v8::Value> arg = v8::Integer::New(len);
+	v8::Handle<v8::Value> rst = func->Call(obj, 1, &arg);
+	v8::String::AsciiValue vbuf(rst);
+	long ret = vbuf.length();
+	memcpy(buf, *vbuf, ret);
+	return ret;
+}
+
 JS_METHOD(k8_istream, args) // new iStream(obj); "obj.read(len)" must be available
 {
 	kstream_t *ks;
 	ASSERT_CONSTRUCTOR(args);
 	if (args.Length() == 0) return v8::Null();
-	ks = ks_init(65536);
-	v8::V8::AdjustAmountOfExternalAllocatedMemory(65536);
+	ks = ks_init(KS_BUF_SIZE);
+	v8::V8::AdjustAmountOfExternalAllocatedMemory(KS_BUF_SIZE);
 	SAVE_VALUE(args, 0, args[0]);
 	SAVE_PTR(args, 1, ks);
 	return args.This();
@@ -483,18 +528,11 @@ JS_METHOD(k8_istream_readline, args) // iStream::readline(sep=line). Read a line
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	kstream_t *ks = LOAD_PTR(args, 1, kstream_t*);
-	int dret, ret, sep = KS_SEP_LINE;
 	if (!args.Length() || !args[0]->IsObject()) return v8::Null(); // TODO: when there are no parameters, skip a line
 	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 	kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
-	if (args.Length() > 1) { // by default, the delimitor is new line
-		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
-			v8::String::AsciiValue str(args[1]);
-			sep = int(k8_cstr(str)[0]);
-		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
-			sep = args[1]->Int32Value();
-	}
-	ret = ks_getuntil(obj, ks, kv, sep, &dret);
+	int dret, ret, sep = get_sep(args);
+	ret = ks_getuntil(obj, ks, kv, sep, &dret, obj_read);
 	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
 	return scope.Close(v8::Integer::New(ret));
 }
@@ -504,7 +542,7 @@ JS_METHOD(k8_istream_close, args) // iStream::close(). If obj.close() is present
 	v8::HandleScope scope;
 	v8::Handle<v8::Object> obj = LOAD_VALUE(args, 0)->ToObject();
 	ks_destroy(LOAD_PTR(args, 1, kstream_t*));
-	v8::V8::AdjustAmountOfExternalAllocatedMemory(-65536);
+	v8::V8::AdjustAmountOfExternalAllocatedMemory(-KS_BUF_SIZE);
 	v8::Handle<v8::Value> func = obj->Get(v8::String::New("close"));
 	if (func->IsFunction()) func.As<v8::Function>()->Call(obj, 0, 0); // if obj.close() is a function then call it
 	SAVE_VALUE(args, 0, v8::Undefined());
@@ -527,7 +565,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_bytes);
 		ft->SetClassName(JS_STR("Bytes"));
-		ft->InstanceTemplate()->SetInternalFieldCount(2);
+		ft->InstanceTemplate()->SetInternalFieldCount(1);
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
@@ -539,9 +577,10 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_file);
 		ft->SetClassName(JS_STR("File"));
-		ft->InstanceTemplate()->SetInternalFieldCount(4); // (fn, mode, fpr, fpw)
+		ft->InstanceTemplate()->SetInternalFieldCount(5); // (fn, mode, fpr, fpw)
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("read", v8::FunctionTemplate::New(k8_file_read));
+		pt->Set("readline", v8::FunctionTemplate::New(k8_file_readline));
 		pt->Set("write", v8::FunctionTemplate::New(k8_file_write));
 		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
 		global->Set(v8::String::New("File"), ft);	
