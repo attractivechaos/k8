@@ -582,13 +582,11 @@ int main(int argc, char* argv[])
 				}
 			}
 		if (!ret && optind != argc) {
-			if (optind + 1 < argc) { // set command line arguments[]
-				v8::HandleScope scope2;
-				v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);
-				for (i = optind + 1; i < argc; ++i)
-					args->Set(v8::Integer::New(i - optind - 1), JS_STR(argv[i]));
-				context->Global()->Set(JS_STR("arguments"), args);
-			}
+			v8::HandleScope scope2;
+			v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);
+			for (i = optind + 1; i < argc; ++i)
+				args->Set(v8::Integer::New(i - optind - 1), JS_STR(argv[i]));
+			context->Global()->Set(JS_STR("arguments"), args);
 			if (!k8_execute(k8_readfile(argv[optind]), JS_STR(argv[optind]), false)) ret = 1;
 		}
 		context->Exit();
