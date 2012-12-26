@@ -1,30 +1,3 @@
-/**************************************************************************************
- * The primary goal of this program is to extend the V8 Javascript engine with
- * usable file I/O. It adds the 'File' object that writes an ordinary file or
- * reads an ordinary file or a zlib compressed file, and the 'iStream' object
- * that reads a line or a field by wrapping 'File'. 'iStream' potentially
- * works with any object that supports reading an arbitrary length of data
- * (e.g. from a socket or from a text buffer).
- *
- * The following demonstrates the extensions:
- *
- * load('k8.js'); // read 'k8.js' from the working directory or from $K8_LIBRARY_PATH
- * print(5, "abc"); // print to stdout, TAB delimited
- *
- * var f = new File("myfile.txt.gz", "r"); // open "myfile.txt.gz" for reading
- * print(f.read(10)); // read the first 10 characters from "myfile.txt.gz"
- * f.close(); // close the file handler
- *
- * f = new File("newfile.txt", "w"); // open "newfile.txt" for writing
- * f.write("abc"); // append "abc" to the file
- * f.close();
- *
- * var line = new Bytes();
- * var s = new iStream(new File("myfile.txt.gz")); // open buffered reader
- * while (s.readline(line) >= 0) print(line.toString()); // read line by line
- * s.close(); // close the stream and the file handler at the same time
- **************************************************************************************/
-
 #define K8_VERSION "0.1.3" // known to work with V8-3.16.1
 
 #include <stdlib.h>
@@ -501,22 +474,16 @@ JS_METHOD(k8_file_write, args) // File::write(str). Write $str and return the nu
 	FILE *fp = LOAD_PTR(args, 3, FILE*);
 	if (fp == 0) return JS_ERROR("file is not open for write");
 	if (args.Length() == 0) return scope.Close(v8::Integer::New(0));
-	v8::String::AsciiValue vbuf(args[0]);
-	long len = fwrite(*vbuf, 1, vbuf.length(), fp);
-	return scope.Close(v8::Integer::New(len));
-}
-
-static int get_sep(const v8::Arguments &args)
-{
-	int sep = KS_SEP_LINE;
-	if (args.Length() > 1) { // by default, the delimitor is new line
-		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
-			v8::String::AsciiValue str(args[1]);
-			sep = int(k8_cstr(str)[0]);
-		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
-			sep = args[1]->Int32Value();
+	long len = 0;
+	if (args[0]->IsString()) {
+		v8::String::AsciiValue vbuf(args[0]);
+		len = fwrite(*vbuf, 1, vbuf.length(), fp);
+	} else if (args[0]->IsObject()) {
+		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
+		kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
+		len = fwrite(kv->a, 1, kv->n, fp);
 	}
-	return sep;
+	return scope.Close(v8::Integer::New(len));
 }
 
 JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
@@ -528,7 +495,14 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 	if (!args.Length() || !args[0]->IsObject()) return v8::Null(); // TODO: when there are no parameters, skip a line
 	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 	kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
-	int dret, ret, sep = get_sep(args);
+	int dret, ret, sep = KS_SEP_LINE;
+	if (args.Length() > 1) { // by default, the delimitor is new line
+		if (args[1]->IsString()) { // if 1st argument is a string, set the delimitor to the 1st charactor of the string
+			v8::String::AsciiValue str(args[1]);
+			sep = int(k8_cstr(str)[0]);
+		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
+			sep = args[1]->Int32Value();
+	}
 	ret = ks_getuntil(fpr, ks, kv, sep, &dret, gzread);
 	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
 	return scope.Close(v8::Integer::New(ret));

@@ -73,7 +73,7 @@ the memory to avoid memory leaks.
 
 ###The Bytes Object
 
-`Bytes` provides a byte array class. It has the following methods:
+`Bytes` provides a byte array. It has the following methods:
 
     // Create a zero-sized byte array
     new Bytes()
@@ -92,7 +92,8 @@ the memory to avoid memory leaks.
 
 	// Replace the byte array starting from $offset to $data, where $data can be a number,
 	// a string, an array or Bytes. The size of the array is modified if the new array
-	// is larger. Return the number of modified bytes.
+	// is larger. Return the number of modified bytes. If only one byte needs to be
+	// changed, using the [] operator gives better performance.
     int Bytes.prototype.set(data, offset)
 
 	// Append $data to the byte array
@@ -124,8 +125,9 @@ the memory to avoid memory leaks.
 	// bytes read to $buf. The size of $buf is unchanged unless it is smaller than $offset+$len.
 	int File.prototype.read(buf, offset, len)
 
-	// Write a string (will be improved later)
-	File.prototype.write(str)
+	// Write $data, which can be a string or Bytes(). Return the number of written bytes.
+	// This method replies on C's fwrite() for buffering.
+	int File.prototype.write(data)
 
 	// Read a line to $bytes. Return the line length or -1 if reaching end-of-file.
 	int File.prototype.readline(bytes)
