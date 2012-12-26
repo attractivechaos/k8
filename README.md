@@ -98,7 +98,7 @@ the memory to avoid memory leaks.
 
 ###The File Object
 
-`File` provides basic unbuffered file I/O. It has the following methods:
+`File` provides buffered file I/O. It has the following methods:
 
 	// Open STDIN. The input stream can be optionally gzip/zlib compressed.
 	new File()
