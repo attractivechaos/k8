@@ -77,22 +77,30 @@ the memory to avoid memory leaks.
 
     // Create a zero-sized byte array
     new Bytes()
+
 	// Create a byte array of length $len
 	new Bytes(len)
+
 	// Get the size of the array
 	int Bytes.prototype.size()
+
 	// Set the size of the array to $len
 	int Bytes.prototype.size(len)
+
 	// The index operator. If $pos goes beyond size(), undefined will be returned.
 	int obj[pos]
+
 	// Replace the byte array starting from $offset to $data, where $data can be a number,
 	// a string, an array or Bytes. The size of the array is modified if the new array
 	// is larger. Return the number of modified bytes.
     int Bytes.prototype.set(data, offset)
+
 	// Append $data to the byte array
 	int Bytes.prototype.set(data)
+
 	// Convert the byte array to string
 	Bytes.prototype.toString()
+
 	// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
 	Bytes.prototype.destroy()
 
@@ -102,23 +110,31 @@ the memory to avoid memory leaks.
 
 	// Open STDIN. The input stream can be optionally gzip/zlib compressed.
 	new File()
+
 	// Open $fileName for reading
 	new File(fileName)
+
 	// Open $fileName under $mode. $mode is in the same syntax as fopen().
 	new File(fileName, mode)
+
 	// Read a byte. Return -1 if reaching end-of-file
 	int File.prototype.read()
+
 	// Read maximum $len bytes of data to $buf, starting from $offset. Return the number of
 	// bytes read to $buf. The size of $buf is unchanged unless it is smaller than $offset+$len.
 	int File.prototype.read(buf, offset, len)
+
 	// Write a string (will be improved later)
 	File.prototype.write(str)
+
 	// Read a line to $bytes. Return the line length or -1 if reaching end-of-file.
 	int File.prototype.readline(bytes)
+
 	// Read a line to $bytes using $sep as the separator. In particular, $sep==0 sets the
 	// separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
 	// $sep is a string, the first character in the string is the separator.
 	int File.prototype.readline(bytes, sep)
+
 	// Close the file
 	File.prototype.close()
 
