@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.3-r35" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.4-r37" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -142,11 +142,6 @@ JS_METHOD(k8_exit, args) // exit()
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_version, args) // version()
-{
-	return v8::String::New(v8::V8::GetVersion());
-}
-
 JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches ONE path in $K8_LIBRARY_PATH
 {
 	char buf[1024], *path = getenv("K8_LIBRARY_PATH");
@@ -195,9 +190,8 @@ JS_METHOD(k8_bytes, args)
 	return args.This();
 }
 
-static inline void kv_resize(kvec8_t *a, int32_t m)
+static inline void kv_recapacity(kvec8_t *a, int32_t m)
 {
-	a->n = m;
 	kroundup32(m);
 	if (a->m != m) {
 		a->a = (uint8_t*)realloc(a->a, m);
@@ -205,6 +199,7 @@ static inline void kv_resize(kvec8_t *a, int32_t m)
 		v8::V8::AdjustAmountOfExternalAllocatedMemory(m - a->m);
 		a->m = m;
 	}
+	if (a->n > a->m) a->n = a->m;
 }
 
 JS_METHOD(k8_bytes_size, args)
@@ -212,10 +207,24 @@ JS_METHOD(k8_bytes_size, args)
 	v8::HandleScope scope;
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length()) {
-		kv_resize(a, args[0]->Int32Value());
-		args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		int32_t n_old = a->n;
+		a->n = args[0]->Int32Value();
+		if (a->n > a->m) kv_recapacity(a, a->n);
+		if (n_old != a->n) args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
 	}
 	return scope.Close(v8::Integer::New(a->n));
+}
+
+JS_METHOD(k8_bytes_capacity, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
+	if (args.Length()) {
+		int32_t n_old = a->n;
+		kv_recapacity(a, args[0]->Int32Value());
+		if (a->n != n_old) args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+	}
+	return scope.Close(v8::Integer::New(a->m));
 }
 
 JS_METHOD(k8_bytes_destroy, args)
@@ -234,7 +243,8 @@ JS_METHOD(k8_bytes_set, args)
 {
 #define _extend_vec_(_l_) do { \
 		if (pos + (int32_t)(_l_) >= a->n) { \
-			kv_resize(a, pos + (_l_)); \
+			kv_recapacity(a, pos + (_l_)); \
+			a->n = pos + (_l_); \
 			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n); \
 		} \
 		cnt = (_l_); \
@@ -339,10 +349,10 @@ static size_t ks_read(file_t &fp, kstream_t *ks, uint8_t *buf, long len, reader_
 }
 
 template<typename file_t, typename reader_t>
-static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, reader_t reader)
+static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, bool append, reader_t reader)
 {
 	if (dret) *dret = 0;
-	kv->n = 0;
+	kv->n = append? kv->n : 0;
 	if (ks->begin >= ks->end && ks->is_eof) return -1;
 	for (;;) {
 		int i;
@@ -440,6 +450,7 @@ JS_METHOD(k8_file_close, args) // File::close(). Close the file.
 		gzclose(fpr);
 		kstream_t *ks = LOAD_PTR(args, 4, kstream_t*);
 		ks_destroy(ks);
+		v8::V8::AdjustAmountOfExternalAllocatedMemory(-KS_BUF_SIZE);
 	}
 	if (fpw) fclose(fpw);
 	SAVE_PTR(args, 2, 0); SAVE_PTR(args, 3, 0); SAVE_PTR(args, 4, 0);
@@ -459,7 +470,7 @@ JS_METHOD(k8_file_read, args) // File::read(), read(buf, offset, length)
 		long off = args[1]->Int32Value(), len = args[2]->Int32Value();
 		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 		kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
-		if (len + off > kv->n) kv_resize(kv, len + off);
+		if (len + off > kv->n) kv_recapacity(kv, len + off);
 		len = ks_read(fp, ks, kv->a + off, len, gzread);
 		if (len + off > kv->n) {
 			kv->n = len + off;
@@ -505,9 +516,87 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
 			sep = args[1]->Int32Value();
 	}
-	ret = ks_getuntil(fpr, ks, kv, sep, &dret, gzread);
+	bool append = (args.Length() > 2 && args[2]->IsBoolean())? args[2]->BooleanValue() : false;
+	ret = ks_getuntil(fpr, ks, kv, sep, &dret, append, gzread);
 	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
-	return scope.Close(v8::Integer::New(ret));
+	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
+}
+
+/**************************
+ *** Fasta/fastq parser ***
+ **************************/
+
+typedef struct {
+	gzFile fp;
+	int last_char;
+	kstream_t *ks;
+	kvec8_t name;
+} fastx_t;
+
+JS_METHOD(k8_fastx, args) // new File(fileName=stdin, mode="r").
+{
+	v8::HandleScope scope;
+	ASSERT_CONSTRUCTOR(args);
+	gzFile fp = 0;
+	if (args.Length()) {
+		if (args[0]->IsString()) {
+			v8::String::AsciiValue file(args[0]);
+			fp = gzopen(*file, "r");
+		} else if (args[0]->IsUint32()) fp = gzdopen(args[0]->Int32Value(), "r");
+	} else fp = gzdopen(fileno(stdin), "r");
+	if (fp == 0) return JS_ERROR("fail to open file");
+	fastx_t *f = (fastx_t*)calloc(1, sizeof(fastx_t));
+	f->fp = fp;
+	f->ks = ks_init(KS_BUF_SIZE);
+	SAVE_PTR(args, 0, f);
+	return args.This();
+}
+
+JS_METHOD(k8_fastx_read, args)
+{
+	v8::HandleScope scope;
+	fastx_t *f = LOAD_PTR(args, 0, fastx_t*);
+	int c;
+	if (args.Length() < 2 || !args[0]->IsObject() || !args[1]->IsObject()) return JS_ERROR("misused Fastx::read(seqBytes, qualBytes)");
+	v8::Handle<v8::Object> so = args[0]->ToObject();
+	v8::Handle<v8::Object> qo = args[1]->ToObject();
+	kvec8_t *s = reinterpret_cast<kvec8_t*>(so->GetAlignedPointerFromInternalField(0));
+	kvec8_t *q = reinterpret_cast<kvec8_t*>(qo->GetAlignedPointerFromInternalField(0));
+	if (f->last_char == 0) {
+		while ((c = ks_getc(f->fp, f->ks, gzread)) != -1 && c != '>' && c != '@');
+		if (c == -1) return v8::Null();
+		f->last_char = c;
+	}
+	s->n = q->n = 0;
+	if (ks_getuntil(f->fp, f->ks, &f->name, 0, &c, false, gzread) < 0) return v8::Null();
+	if (c != '\n') while ((c = ks_getc(f->fp, f->ks, gzread)) != -1 && c != '\n');
+	if (s->a == 0) kv_recapacity(s, 256);
+	while ((c = ks_getc(f->fp, f->ks, gzread)) != -1 && c != '>' && c != '+' && c != '@') {
+		if (c == '\n') continue;
+		s->a[s->n++] = c; // this is safe: we always have enough space for 1 char
+		ks_getuntil(f->fp, f->ks, s, KS_SEP_LINE, 0, true, gzread);
+	}
+	if (c == '>' || c == '@') f->last_char = c;
+	if (s->n + 1 >= s->m) kv_recapacity(s, s->n + 1);
+	so->SetIndexedPropertiesToExternalArrayData(s->a, v8::kExternalUnsignedByteArray, s->n);
+	if (c != '+') return scope.Close(v8::String::New((const char*)f->name.a, f->name.n));
+	if (q->m < s->m) kv_recapacity(q, s->m);
+	while ((c = ks_getc(f->fp, f->ks, gzread)) != -1 && c != '\n');
+	if (c == -1) return v8::Undefined();
+	while (ks_getuntil(f->fp, f->ks, q, KS_SEP_LINE, 0, true, gzread) >= 0 && s->n < q->n);
+	f->last_char = 0;
+	if (s->n != q->n) return v8::Undefined();
+	qo->SetIndexedPropertiesToExternalArrayData(q->a, v8::kExternalUnsignedByteArray, q->n);
+	return scope.Close(v8::String::New((const char*)f->name.a, f->name.n));
+}
+
+JS_METHOD(k8_fastx_destroy, args)
+{
+	v8::HandleScope scope;
+	fastx_t *f = LOAD_PTR(args, 0, fastx_t*);
+	gzclose(f->fp); free(f->name.a); ks_destroy(f->ks); free(f);
+	SAVE_PTR(args, 0, 0);
+	return v8::Undefined();
 }
 
 /*********************
@@ -520,7 +609,6 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	global->Set(JS_STR("print"), v8::FunctionTemplate::New(k8_print));
 	global->Set(JS_STR("exit"), v8::FunctionTemplate::New(k8_exit));
 	global->Set(JS_STR("load"), v8::FunctionTemplate::New(k8_load));
-	global->Set(JS_STR("version"), v8::FunctionTemplate::New(k8_version));
 	{ // add the 'Bytes' object
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_bytes);
@@ -528,6 +616,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		ft->InstanceTemplate()->SetInternalFieldCount(1);
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
+		pt->Set("capacity", v8::FunctionTemplate::New(k8_bytes_capacity));
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
 		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
@@ -543,7 +632,18 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		pt->Set("readline", v8::FunctionTemplate::New(k8_file_readline));
 		pt->Set("write", v8::FunctionTemplate::New(k8_file_write));
 		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_file_close));
 		global->Set(v8::String::New("File"), ft);	
+	}
+	{ // add the 'Fastx' object
+		v8::HandleScope scope;
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_fastx);
+		ft->SetClassName(JS_STR("Fastx"));
+		ft->InstanceTemplate()->SetInternalFieldCount(1);
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set("read", v8::FunctionTemplate::New(k8_fastx_read));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_fastx_destroy));
+		global->Set(v8::String::New("Fastx"), ft);	
 	}
 	return v8::Context::New(NULL, global);
 }
@@ -553,7 +653,7 @@ int main(int argc, char* argv[])
 	v8::V8::SetFlagsFromCommandLine(&argc, argv, true);
 	int ret = 0;
 	if (argc == 1) {
-		fprintf(stderr, "Usage: k8 [-e jsSrc] [-E jsSrc] <src.js> [arguments]\n");
+		fprintf(stderr, "Usage: k8 [-v] [-e jsSrc] [-E jsSrc] <src.js> [arguments]\n");
 		return 1;
 	}
 	{
@@ -565,13 +665,13 @@ int main(int argc, char* argv[])
 		}
 		context->Enter();
 		int i, c;
-		while ((c = getopt(argc, argv, "e:E:")) >= 0) // parse k8 related command line options
+		while ((c = getopt(argc, argv, "ve:E:")) >= 0) // parse k8 related command line options
 			if (c == 'e' || c == 'E') {
 				if (!k8_execute(JS_STR(optarg), JS_STR("CLI"), (c == 'E'))) { // note the difference between 'e' and 'E'
 					ret = 1;
 					break;
 				}
-			}
+			} else if (c == 'v') printf("V8: %s\nK8: %s\n", v8::V8::GetVersion(), K8_VERSION);
 		if (!ret && optind != argc) {
 			v8::HandleScope scope2;
 			v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);

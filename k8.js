@@ -163,50 +163,64 @@ print(Math.m.solve(a));
 Math.m.print(a);
 */
 
+/************************************
+ * Fasta/Fastq reader in Javascript *
+ ************************************/
+
+// This JS implementation is much slower than Fastx, whose core is implemented in C
+
+FastxJS = function(f) {
+	this._file = f;
+	this._last = 0;
+	this._line = new Bytes();
+	this._finished = false;
+	this.s = new Bytes();
+	this.q = new Bytes();
+	this.n = new Bytes();
+	this.c = new Bytes();
+}
+
+FastxJS.prototype.read = function() {
+	var c, f = this._file, line = this._line;
+	if (this._last == 0) { // then jump to the next header line
+		while ((c = f.read()) != -1 && c != 62 && c != 64);
+		if (c == -1) return -1; // end of file
+		this._last = c;
+	} // else: the first header char has been read in the previous call
+	this.c.size(0); this.s.size(0); this.q.size(0);
+	if ((c = f.readline(this.n, 0)) < 0) return -1; // normal exit: EOF
+	if (c != 10) f.readline(this.c); // read FASTA/Q comment
+	if (this.s.capacity() == 0) this.s.capacity(256);
+	while ((c = f.read()) != -1 && c != 62 && c != 43 && c != 64) {
+		if (c == 10) continue; // skip empty lines
+		this.s.set(c);
+		f.readline(this.s, 2, true); // read the rest of the line
+	}
+	if (c == 62 || c == 64) this._last = c; // the first header char has been read
+	if (c != 43) return this.s.size(); // FASTA
+	this.q.capacity(this.s.capacity());
+	c = f.readline(this._line); // skip the rest of '+' line
+	if (c < 0) return -2; // error: no quality string
+	var size = this.s.size();
+	while (f.readline(this.q, 2, true) >= 0 && this.q.size() < size);
+	f._last = 0; // we have not come to the next header line
+	if (this.q.size() != size) return -2; // error: qual string is of a different length
+	return size;
+}
+
+FastxJS.prototype.destroy = function() {
+	this.s.destroy(); this.q.destroy(); this.c.destroy(); this.n.destroy(); this._line.destroy();
+	if (typeof(this._file.close) == 'object') this._file.close();
+}
+
 /**************************
  * Bioinformatics related *
  **************************/
-
+/*
 Bio = {};
-
-Bio.Seq = function(_seq) {
-	this.seq = (typeof(_seq) == 'undefined')? null : _seq;
-	this.read = function(next_func) {
-		var line, match;
-		if (this._finished) return null;
-		if (!this._last) { // the first record
-			while ((line = next_func()) != null) {
-				if (/^>\S/.test(line)) {
-					this._last = line;
-					break;
-				}
-			}
-		}
-		if ((match = /^>(\S+)(\s+(\S+))?/.exec(this._last)))
-			this.name = match[1], this.comment = match[3];
-		this.seq = '';
-		while ((line = next_func()) != null) {
-			if (/^>\S/.test(line)) {
-				this._last = line;
-				break;
-			}
-			line.replace(/\s/g, '');
-			this.seq += line;
-		}
-		if (line == null) this._finished = true;
-		return this;
-	}
-	this.print = function(_linelen) {
-		var linelen = (typeof(_linelen) != 'number')? 60 : _linelen;
-		print(">"+this.name+(this.comment? ' '+this.comment : ''));
-		for (var i = 0; i < this.seq.length; i += linelen)
-			print(this.seq.substr(i, linelen));
-	}
-}
-
 Bio.Seq.comp_pair = ['WSATUGCYRKMBDHVNwsatugcyrkmbdhvn', 'WSTAACGRYMKVHDBNwstaacgrymkvhdbn'];
 Bio.Seq.ts_table = {'AG':1, 'GA':1, 'CT':2, 'TC':2};
-
+*/
 /* // Bio.Seq example
 var s = new Bio.Seq();
 var f = new File(arguments[0]);
