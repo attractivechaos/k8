@@ -1,4 +1,4 @@
-#define K8_VERSION "r34" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.3-r35" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
