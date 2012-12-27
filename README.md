@@ -109,14 +109,15 @@ the memory to avoid memory leaks.
 
 `File` provides buffered file I/O. It has the following methods:
 
-	// Open STDIN. The input stream can be optionally gzip/zlib compressed.
-	new File()
+	// Open $fileName under $mode. $mode is in the same syntax as fopen(). Integer $fileName for
+	// a file descriptor. In particular, 0 for STDIN, 1 for STDOUT and 2 for STDERR.
+	new File(fileName, mode)
 
-	// Open $fileName for reading
+	// Equivalent to 'new File(fileName, "r")'
 	new File(fileName)
 
-	// Open $fileName under $mode. $mode is in the same syntax as fopen().
-	new File(fileName, mode)
+	// Equivalent to 'new File(0)'
+	new File()
 
 	// Read a byte. Return -1 if reaching end-of-file
 	int File.prototype.read()
@@ -129,13 +130,14 @@ the memory to avoid memory leaks.
 	// This method replies on C's fwrite() for buffering.
 	int File.prototype.write(data)
 
-	// Read a line to $bytes. Return the line length or -1 if reaching end-of-file.
-	int File.prototype.readline(bytes)
-
 	// Read a line to $bytes using $sep as the separator. In particular, $sep==0 sets the
 	// separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
-	// $sep is a string, the first character in the string is the separator.
+	// $sep is a string, the first character in the string is the separator. Return the
+	// line length or -1 if reaching end-of-file.
 	int File.prototype.readline(bytes, sep)
+
+	// Equivalent to 'File.prototype.readline(bytes, 2)'
+	int File.prototype.readline(bytes)
 
 	// Close the file
 	File.prototype.close()

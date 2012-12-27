@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.3" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.4" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -398,20 +398,22 @@ JS_METHOD(k8_file, args) // new File(fileName=stdin, mode="r").
 {
 	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
+	int fd = -1;
 	FILE *fpw = 0;  // write ordinary files
 	gzFile fpr = 0; // zlib transparently reads both ordinary and zlib/gzip files
 	if (args.Length()) {
 		SAVE_VALUE(args, 0, args[0]); // InternalField[0] keeps the file name
 		v8::String::AsciiValue file(args[0]);
+		if (args[0]->IsUint32()) fd = args[0]->Int32Value();
 		if (args.Length() >= 2) {
 			SAVE_VALUE(args, 1, args[1]); // InternalField[1] keeps the mode
 			v8::String::AsciiValue mode(args[1]);
 			const char *cstr = k8_cstr(mode);
-			if (strchr(cstr, 'w')) fpw = fopen(k8_cstr(file), cstr);
-			else fpr = gzopen(k8_cstr(file), cstr);
+			if (strchr(cstr, 'w')) fpw = fd >= 0? fdopen(fd, cstr) : fopen(k8_cstr(file), cstr);
+			else fpr = fd >= 0? gzdopen(fd, cstr) : gzopen(k8_cstr(file), cstr);
 		} else {
 			SAVE_VALUE(args, 1, JS_STR("r"));
-			fpr = gzopen(*file, "r");
+			fpr = fd >= 0? gzdopen(fd, "r") : gzopen(*file, "r");
 		}
 		if (fpr == 0 && fpw == 0)
 			return JS_THROW(Error, "[File] Fail to open the file");
