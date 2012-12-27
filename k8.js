@@ -167,9 +167,7 @@ Math.m.print(a);
  * Fasta/Fastq reader in Javascript *
  ************************************/
 
-// This JS implementation is much slower than Fastx, whose core is implemented in C
-
-FastxJS = function(f) {
+Fastx = function(f) {
 	this._file = f;
 	this._last = 0;
 	this._line = new Bytes();
@@ -180,7 +178,7 @@ FastxJS = function(f) {
 	this.c = new Bytes();
 }
 
-FastxJS.prototype.read = function() {
+Fastx.prototype.read = function() {
 	var c, f = this._file, line = this._line;
 	if (this._last == 0) { // then jump to the next header line
 		while ((c = f.read()) != -1 && c != 62 && c != 64);
@@ -208,7 +206,7 @@ FastxJS.prototype.read = function() {
 	return size;
 }
 
-FastxJS.prototype.destroy = function() {
+Fastx.prototype.destroy = function() {
 	this.s.destroy(); this.q.destroy(); this.c.destroy(); this.n.destroy(); this._line.destroy();
 	if (typeof(this._file.close) == 'object') this._file.close();
 }
