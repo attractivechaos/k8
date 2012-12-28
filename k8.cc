@@ -1,10 +1,9 @@
-#define K8_VERSION "0.1.4-r37" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.4-r38" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <zlib.h>
@@ -520,6 +519,54 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 	ret = ks_getuntil(fpr, ks, kv, sep, &dret, append, gzread);
 	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
+}
+
+/***********************
+ *** Getopt from BSD ***
+ ***********************/
+
+// Modified from getopt.c from BSD, 3-clause BSD license. Copyright (c) 1987-2002 The Regents of the University of California.
+// We do not use system getopt() because it may parse "-v" in "k8 prog.js -v".
+
+int opterr = 1, optind = 1, optopt, optreset;
+char *optarg;
+
+int getopt(int nargc, char * const *nargv, const char *ostr)
+{
+	static char *place = 0;
+	char *oli;
+	if (optreset || !place || !*place) {
+		optreset = 0;
+		if (optind >= nargc || *(place = nargv[optind]) != '-') {
+			place = 0;
+			return -1;
+		}
+		if (place[1] && *++place == '-') {
+			++optind, place = 0;
+			return -1;
+		}
+	}
+	if ((optopt = (int)*place++) == (int)':' || !(oli = strchr(ostr, optopt))) {
+		if (optopt == (int)'-') return -1;
+		if (!*place) ++optind;
+		if (opterr && *ostr != ':') fprintf(stderr, "%s: illegal option -- %c\n", __FILE__, optopt);
+		return ':';
+	}
+	if (*++oli != ':') {
+		optarg = 0;
+		if (!*place) ++optind;
+	} else {
+		if (*place) optarg = place;
+		else if (nargc <= ++optind) {
+			place = 0;
+			if (*ostr == ':') return '?';
+			if (opterr) fprintf(stderr, "%s: option requires an argument -- %c\n", __FILE__, optopt);
+			return (BADCH);
+		} else optarg = nargv[optind];
+		place = 0;
+		++optind;
+	}
+	return optopt;
 }
 
 /*********************
