@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.4-r38" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.4-r39" // known to work with V8-3.16.1
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -534,7 +534,7 @@ char *optarg;
 int getopt(int nargc, char * const *nargv, const char *ostr)
 {
 	static char *place = 0;
-	char *oli;
+	const char *oli;
 	if (optreset || !place || !*place) {
 		optreset = 0;
 		if (optind >= nargc || *(place = nargv[optind]) != '-') {
@@ -546,11 +546,11 @@ int getopt(int nargc, char * const *nargv, const char *ostr)
 			return -1;
 		}
 	}
-	if ((optopt = (int)*place++) == (int)':' || !(oli = strchr(ostr, optopt))) {
-		if (optopt == (int)'-') return -1;
+	if ((optopt = *place++) == ':' || !(oli = strchr(ostr, optopt))) {
+		if (optopt == '-') return -1;
 		if (!*place) ++optind;
 		if (opterr && *ostr != ':') fprintf(stderr, "%s: illegal option -- %c\n", __FILE__, optopt);
-		return ':';
+		return '?';
 	}
 	if (*++oli != ':') {
 		optarg = 0;
@@ -559,9 +559,9 @@ int getopt(int nargc, char * const *nargv, const char *ostr)
 		if (*place) optarg = place;
 		else if (nargc <= ++optind) {
 			place = 0;
-			if (*ostr == ':') return '?';
+			if (*ostr == ':') return ':';
 			if (opterr) fprintf(stderr, "%s: option requires an argument -- %c\n", __FILE__, optopt);
-			return (BADCH);
+			return '?';
 		} else optarg = nargv[optind];
 		place = 0;
 		++optind;
