@@ -52,6 +52,56 @@ while ((c = getopt(arguments, "i:xy")) != null) {
 */
 
 /*********************
+ * Special functions *
+ *********************/
+
+Math.lgamma = function(z) {
+	var x = 0;
+	x += 0.1659470187408462e-06 / (z+7);
+	x += 0.9934937113930748e-05 / (z+6);
+	x -= 0.1385710331296526     / (z+5);
+	x += 12.50734324009056      / (z+4);
+	x -= 176.6150291498386      / (z+3);
+	x += 771.3234287757674      / (z+2);
+	x -= 1259.139216722289      / (z+1);
+	x += 676.5203681218835      / z;
+	x += 0.9999999999995183;
+	return Math.log(x) - 5.58106146679532777 - z + (z-0.5) * Math.log(z+6.5);
+}
+
+function _kf_gammap(s, z)
+{
+	var sum, x, k;
+	for (k = 1, sum = x = 1.; k < 100; ++k) {
+		sum += (x *= z / (s + k));
+		if (x / sum < 1e-290) break;
+	}
+	return Math.exp(s * Math.log(z) - z - Math.lgamma(s + 1.) + Math.log(sum));
+}
+
+function _kf_gammaq(s, z)
+{
+	var C, D, f, KF_TINY = 1e-14;
+	f = 1. + z - s; C = f; D = 0.;
+	for (var j = 1; j < 100; ++j) {
+		var a = j * (s - j), b = (j<<1) + 1 + z - s, d;
+		D = b + a * D;
+		if (D < KF_TINY) D = KF_TINY;
+		C = b + a / C;
+		if (C < KF_TINY) C = KF_TINY;
+		D = 1. / D;
+		d = C * D;
+		f *= d;
+		if (Math.abs(d - 1.) < 1e-290) break;
+	}
+	return Math.exp(s * Math.log(z) - z - Math.lgamma(s) - Math.log(f));
+}
+
+Math.gammap = function(s, z) { return z <= 1. || z < s? _kf_gammap(s, z) : 1. - _kf_gammaq(s, z); }
+Math.gammaq = function(s, z) { return z <= 1. || z < s? 1. - _kf_gammap(s, z) : _kf_gammaq(s, z); }
+Math.chi2 = function(d, x2) { return Math.gammaq(.5 * d, .5 * x2); }
+
+/*********************
  * Matrix operations *
  *********************/
 
