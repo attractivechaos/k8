@@ -174,18 +174,67 @@ typedef struct {
 	uint8_t *a;
 } kvec8_t;
 
+static inline void set_length(const v8::Handle<v8::Object> &obj, const kvec8_t *v)
+{
+	obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedByteArray, v->n);
+	obj->Set(JS_STR("length"), v8::Int32::New(v->n));
+	obj->Set(JS_STR("byteLength"), v8::Int32::New(v->n));
+}
+
+static inline int cast_type(const v8::Handle<v8::Object> &obj, const kvec8_t *v, const char *type)
+{
+	if (strcmp(type, "int8_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalByteArray, v->n);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n));
+	} else if (strcmp(type, "uint8_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedByteArray, v->n);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n));
+	} else if (strcmp(type, "int16_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalShortArray, v->n>>1);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>1));
+	} else if (strcmp(type, "uint16_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedShortArray, v->n>>1);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>1));
+	} else if (strcmp(type, "int32_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalIntArray, v->n>>2);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
+	} else if (strcmp(type, "uint32_t") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedIntArray, v->n>>2);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
+	} else if (strcmp(type, "Float") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalFloatArray, v->n>>2);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
+	} else if (strcmp(type, "double") == 0) {
+		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalDoubleArray, v->n>>3);
+		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>3));
+	} else return -1;
+	return 0;
+}
+
 JS_METHOD(k8_bytes, args)
 {
 	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
 	kvec8_t *a;
+	int tsize = 1;
+	if (args.Length() > 1 && args[1]->IsString()) {
+		v8::String::AsciiValue type(args[1]);
+		if (*type == 0 || strstr(*type, "int8")) tsize = 1;
+		else if (strstr(*type, "int16")) tsize = 2;
+		else if (strstr(*type, "int32") || strcmp(*type, "float")) tsize = 4;
+		else if (strcmp(*type, "double")) tsize = 8;
+	}
 	a = (kvec8_t*)calloc(1, sizeof(kvec8_t));
 	if (args.Length()) {
-		a->m = a->n = args[0]->Int32Value();
+		a->m = a->n = args[0]->Int32Value() * tsize;
 		a->a = (uint8_t*)calloc(a->n, 1);
 	}
 	SAVE_PTR(args, 0, a);
-	args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+	if (args.Length() > 1 && args[1]->IsString()) {
+		v8::String::AsciiValue type(args[1]);
+		if (cast_type(args.This(), a, *type) < 0)
+			return JS_ERROR("unrecognized cast type");
+	} else set_length(args.This(), a);
 	return args.This();
 }
 
@@ -209,7 +258,7 @@ JS_METHOD(k8_bytes_size, args)
 		int32_t n_old = a->n;
 		a->n = args[0]->Int32Value();
 		if (a->n > a->m) kv_recapacity(a, a->n);
-		if (n_old != a->n) args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		if (n_old != a->n) set_length(args.This(), a);
 	}
 	return scope.Close(v8::Integer::New(a->n));
 }
@@ -221,18 +270,31 @@ JS_METHOD(k8_bytes_capacity, args)
 	if (args.Length()) {
 		int32_t n_old = a->n;
 		kv_recapacity(a, args[0]->Int32Value());
-		if (a->n != n_old) args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n);
+		if (a->n != n_old) set_length(args.This(), a);
 	}
 	return scope.Close(v8::Integer::New(a->m));
+}
+
+JS_METHOD(k8_bytes_cast, args)
+{
+	v8::HandleScope scope;
+	kvec8_t *v = LOAD_PTR(args, 0, kvec8_t*);
+	if (args.Length()) {
+		v8::String::AsciiValue type(args[0]);
+		if (cast_type(args.This(), v, *type) < 0)
+			return JS_ERROR("unrecognized cast type");
+	} else set_length(args.This(), v);
+	return v8::Undefined();
 }
 
 JS_METHOD(k8_bytes_destroy, args)
 {
 	v8::HandleScope scope;
-	args.This()->SetIndexedPropertiesToExternalArrayData(0, v8::kExternalUnsignedByteArray, 0);
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	free(a->a);
 	v8::V8::AdjustAmountOfExternalAllocatedMemory(-a->m);
+	a->a = 0; a->n = a->m = 0;
+	set_length(args.This(), a);
 	free(a);
 	SAVE_PTR(args, 0, 0);
 	return v8::Undefined();
@@ -244,7 +306,7 @@ JS_METHOD(k8_bytes_set, args)
 		if (pos + (int32_t)(_l_) >= a->n) { \
 			kv_recapacity(a, pos + (_l_)); \
 			a->n = pos + (_l_); \
-			args.This()->SetIndexedPropertiesToExternalArrayData(a->a, v8::kExternalUnsignedByteArray, a->n); \
+			set_length(args.This(), a); \
 		} \
 		cnt = (_l_); \
 	} while (0)
@@ -473,7 +535,7 @@ JS_METHOD(k8_file_read, args) // File::read(), read(buf, offset, length)
 		len = ks_read(fp, ks, kv->a + off, len, gzread);
 		if (len + off > kv->n) {
 			kv->n = len + off;
-			b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
+			set_length(b, kv);
 		}
 		return scope.Close(v8::Integer::New(len));
 	}
@@ -517,7 +579,7 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 	}
 	bool append = (args.Length() > 2 && args[2]->IsBoolean())? args[2]->BooleanValue() : false;
 	ret = ks_getuntil(fpr, ks, kv, sep, &dret, append, gzread);
-	b->SetIndexedPropertiesToExternalArrayData(kv->a, v8::kExternalUnsignedByteArray, kv->n);
+	set_length(b, kv);
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
 }
 
@@ -586,7 +648,9 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		ft->InstanceTemplate()->SetInternalFieldCount(1);
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
+		pt->Set("resize", v8::FunctionTemplate::New(k8_bytes_size));
 		pt->Set("capacity", v8::FunctionTemplate::New(k8_bytes_capacity));
+		pt->Set("cast", v8::FunctionTemplate::New(k8_bytes_cast));
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
 		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
