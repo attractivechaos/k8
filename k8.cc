@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.4-r45" // known to work with V8-3.16.3
+#define K8_VERSION "0.1.4-r46" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -178,8 +178,8 @@ typedef struct {
 static inline void set_length(const v8::Handle<v8::Object> &obj, const kvec8_t *v)
 {
 	obj->SetIndexedPropertiesToExternalArrayData(v->a, v->eta, v->n >> v->tshift);
-	obj->Set(JS_STR("length"), v8::Int32::New(v->n >> v->tshift));
-	obj->Set(JS_STR("byteLength"), v8::Int32::New(v->n));
+//	obj->Set(JS_STR("length"), v8::Int32::New(v->n >> v->tshift));
+//	obj->Set(JS_STR("byteLength"), v8::Int32::New(v->n));
 }
 
 static inline void kv_set_type(kvec8_t *v, const char *type)
@@ -555,7 +555,11 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
 			sep = args[1]->Int32Value();
 	}
-	int offset = (args.Length() > 2 && args[2]->IsUint32())? args[2]->Uint32Value() : 0;
+	int offset = 0;
+	if (args.Length() > 2) {
+		if (args[2]->IsUint32()) offset = args[2]->Uint32Value();
+		else if (args[2]->IsBoolean()) offset = args[2]->BooleanValue()? kv->n : 0;
+	}
 	ret = ks_getuntil(fpr, ks, kv, sep, &dret, offset, gzread);
 	set_length(b, kv);
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
