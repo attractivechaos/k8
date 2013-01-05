@@ -590,7 +590,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
 		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
-		global->Set(JS_STR("Bytes"), ft);	
+		global->Set("Bytes", ft);	
 	}
 	{ // add the 'File' object
 		v8::HandleScope scope;
@@ -603,7 +603,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		pt->Set("write", v8::FunctionTemplate::New(k8_file_write));
 		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_file_close));
-		global->Set(v8::String::New("File"), ft);	
+		global->Set("File", ft);	
 	}
 	return v8::Context::New(NULL, global);
 }
