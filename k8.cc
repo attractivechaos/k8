@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.4-r39" // known to work with V8-3.16.1
+#define K8_VERSION "0.1.4-r44" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -170,45 +170,30 @@ JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches
  ********************/
 
 typedef struct {
-	int32_t n, m;
+	int32_t n, m, tshift;
+	v8::ExternalArrayType eta;
 	uint8_t *a;
 } kvec8_t;
 
 static inline void set_length(const v8::Handle<v8::Object> &obj, const kvec8_t *v)
 {
-	obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedByteArray, v->n);
-	obj->Set(JS_STR("length"), v8::Int32::New(v->n));
+	obj->SetIndexedPropertiesToExternalArrayData(v->a, v->eta, v->n >> v->tshift);
+	obj->Set(JS_STR("length"), v8::Int32::New(v->n >> v->tshift));
 	obj->Set(JS_STR("byteLength"), v8::Int32::New(v->n));
 }
 
-static inline int cast_type(const v8::Handle<v8::Object> &obj, const kvec8_t *v, const char *type)
+static inline void kv_set_type(kvec8_t *v, const char *type)
 {
-	if (strcmp(type, "int8_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalByteArray, v->n);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n));
-	} else if (strcmp(type, "uint8_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedByteArray, v->n);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n));
-	} else if (strcmp(type, "int16_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalShortArray, v->n>>1);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>1));
-	} else if (strcmp(type, "uint16_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedShortArray, v->n>>1);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>1));
-	} else if (strcmp(type, "int32_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalIntArray, v->n>>2);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
-	} else if (strcmp(type, "uint32_t") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalUnsignedIntArray, v->n>>2);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
-	} else if (strcmp(type, "Float") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalFloatArray, v->n>>2);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>2));
-	} else if (strcmp(type, "double") == 0) {
-		obj->SetIndexedPropertiesToExternalArrayData(v->a, v8::kExternalDoubleArray, v->n>>3);
-		obj->Set(JS_STR("length"), v8::Int32::New(v->n>>3));
-	} else return -1;
-	return 0;
+	if (type == 0) v->tshift = 0, v->eta = v8::kExternalUnsignedByteArray;
+	else if (strcmp(type, "int8_t") == 0) v->tshift = 0, v->eta = v8::kExternalByteArray;
+	else if (strcmp(type, "uint8_t") == 0) v->tshift = 0, v->eta = v8::kExternalUnsignedByteArray;
+	else if (strcmp(type, "int16_t") == 0) v->tshift = 1, v->eta = v8::kExternalShortArray;
+	else if (strcmp(type, "uint16_t") == 0) v->tshift = 1, v->eta = v8::kExternalUnsignedShortArray;
+	else if (strcmp(type, "int32_t") == 0) v->tshift = 2, v->eta = v8::kExternalIntArray;
+	else if (strcmp(type, "uint32_t") == 0) v->tshift = 2, v->eta = v8::kExternalUnsignedIntArray;
+	else if (strcmp(type, "float") == 0) v->tshift = 2, v->eta = v8::kExternalFloatArray;
+	else if (strcmp(type, "double") == 0) v->tshift = 3, v->eta = v8::kExternalDoubleArray;
+	else v->tshift = 0, v->eta = v8::kExternalUnsignedByteArray;
 }
 
 JS_METHOD(k8_bytes, args)
@@ -216,25 +201,18 @@ JS_METHOD(k8_bytes, args)
 	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
 	kvec8_t *a;
-	int tsize = 1;
-	if (args.Length() > 1 && args[1]->IsString()) {
-		v8::String::AsciiValue type(args[1]);
-		if (*type == 0 || strstr(*type, "int8")) tsize = 1;
-		else if (strstr(*type, "int16")) tsize = 2;
-		else if (strstr(*type, "int32") || strcmp(*type, "float")) tsize = 4;
-		else if (strcmp(*type, "double")) tsize = 8;
-	}
 	a = (kvec8_t*)calloc(1, sizeof(kvec8_t));
-	if (args.Length()) {
-		a->m = a->n = args[0]->Int32Value() * tsize;
-		a->a = (uint8_t*)calloc(a->n, 1);
-	}
-	SAVE_PTR(args, 0, a);
+	kv_set_type(a, 0);
 	if (args.Length() > 1 && args[1]->IsString()) {
 		v8::String::AsciiValue type(args[1]);
-		if (cast_type(args.This(), a, *type) < 0)
-			return JS_ERROR("unrecognized cast type");
-	} else set_length(args.This(), a);
+		kv_set_type(a, *type);
+	}
+	if (args.Length()) {
+		a->m = a->n = args[0]->Int32Value() << a->tshift;
+		a->a = (uint8_t*)calloc(a->n, 1); // NB: we are expecting malloc/calloc/realloc() only allocate aligned memory
+	}
+	set_length(args.This(), a);
+	SAVE_PTR(args, 0, a);
 	return args.This();
 }
 
@@ -256,11 +234,11 @@ JS_METHOD(k8_bytes_size, args)
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length()) {
 		int32_t n_old = a->n;
-		a->n = args[0]->Int32Value();
+		a->n = args[0]->Int32Value() << a->tshift;
 		if (a->n > a->m) kv_recapacity(a, a->n);
 		if (n_old != a->n) set_length(args.This(), a);
 	}
-	return scope.Close(v8::Integer::New(a->n));
+	return scope.Close(v8::Integer::New(a->n >> a->tshift));
 }
 
 JS_METHOD(k8_bytes_capacity, args)
@@ -269,10 +247,10 @@ JS_METHOD(k8_bytes_capacity, args)
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length()) {
 		int32_t n_old = a->n;
-		kv_recapacity(a, args[0]->Int32Value());
+		kv_recapacity(a, args[0]->Int32Value() << a->tshift);
 		if (a->n != n_old) set_length(args.This(), a);
 	}
-	return scope.Close(v8::Integer::New(a->m));
+	return scope.Close(v8::Integer::New(a->m >> a->tshift));
 }
 
 JS_METHOD(k8_bytes_cast, args)
@@ -281,9 +259,9 @@ JS_METHOD(k8_bytes_cast, args)
 	kvec8_t *v = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length()) {
 		v8::String::AsciiValue type(args[0]);
-		if (cast_type(args.This(), v, *type) < 0)
-			return JS_ERROR("unrecognized cast type");
-	} else set_length(args.This(), v);
+		kv_set_type(v, *type);
+	} else kv_set_type(v, 0);
+	set_length(args.This(), v);
 	return v8::Undefined();
 }
 
