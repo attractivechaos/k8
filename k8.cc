@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.4-r44" // known to work with V8-3.16.3
+#define K8_VERSION "0.1.4-r45" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -388,10 +388,10 @@ static size_t ks_read(file_t &fp, kstream_t *ks, uint8_t *buf, long len, reader_
 }
 
 template<typename file_t, typename reader_t>
-static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, bool append, reader_t reader)
+static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, int offset, reader_t reader)
 {
 	if (dret) *dret = 0;
-	kv->n = append? kv->n : 0;
+	kv->n = offset >= 0? offset : 0;
 	if (ks->begin >= ks->end && ks->is_eof) return -1;
 	for (;;) {
 		int i;
@@ -555,8 +555,8 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 		} else if (args[1]->IsInt32()) // if 1st argument is an integer, set the delimitor to the integer: 0=>isspace(); 1=>isspace()&&!' '; 2=>newline
 			sep = args[1]->Int32Value();
 	}
-	bool append = (args.Length() > 2 && args[2]->IsBoolean())? args[2]->BooleanValue() : false;
-	ret = ks_getuntil(fpr, ks, kv, sep, &dret, append, gzread);
+	int offset = (args.Length() > 2 && args[2]->IsUint32())? args[2]->Uint32Value() : 0;
+	ret = ks_getuntil(fpr, ks, kv, sep, &dret, offset, gzread);
 	set_length(b, kv);
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
 }
