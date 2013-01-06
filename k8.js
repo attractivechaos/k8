@@ -250,24 +250,24 @@ Fastx.prototype.read = function() {
 		if (c == -1) return -1; // end of file
 		this._last = c;
 	} // else: the first header char has been read in the previous call
-	this.c.size(0); this.s.size(0); this.q.size(0);
+	this.c.length = this.s.length = this.q.length = 0;
 	if ((c = f.readline(this.n, 0)) < 0) return -1; // normal exit: EOF
 	if (c != 10) f.readline(this.c); // read FASTA/Q comment
-	if (this.s.capacity() == 0) this.s.capacity(256);
+	if (this.s.capacity == 0) this.s.capacity = 256;
 	while ((c = f.read()) != -1 && c != 62 && c != 43 && c != 64) {
 		if (c == 10) continue; // skip empty lines
 		this.s.set(c);
 		f.readline(this.s, 2, true); // read the rest of the line
 	}
 	if (c == 62 || c == 64) this._last = c; // the first header char has been read
-	if (c != 43) return this.s.size(); // FASTA
-	this.q.capacity(this.s.capacity());
+	if (c != 43) return this.s.length; // FASTA
+	this.q.capacity = this.s.capacity;
 	c = f.readline(this._line); // skip the rest of '+' line
 	if (c < 0) return -2; // error: no quality string
-	var size = this.s.size();
-	while (f.readline(this.q, 2, true) >= 0 && this.q.size() < size);
+	var size = this.s.length;
+	while (f.readline(this.q, 2, true) >= 0 && this.q.length < size);
 	f._last = 0; // we have not come to the next header line
-	if (this.q.size() != size) return -2; // error: qual string is of a different length
+	if (this.q.length != size) return -2; // error: qual string is of a different length
 	return size;
 }
 
