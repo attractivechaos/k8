@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.0-r48" // known to work with V8-3.16.3
+#define K8_VERSION "0.2.0-r50" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -143,7 +143,7 @@ JS_METHOD(k8_exit, args) // exit()
 
 JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches ONE path in $K8_LIBRARY_PATH
 {
-	char buf[1024], *path = getenv("K8_LIBRARY_PATH");
+	char buf[1024], *path = getenv("K8_PATH");
 	FILE *fp;
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope;
@@ -154,7 +154,7 @@ JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches
 			strcpy(buf, *file);
 		} else if (path) { // TODO: to allow multiple paths separated by ":"
 			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
-			if ((fp = fopen(*file, "r")) == 0) buf[0] = 0;
+			if ((fp = fopen(buf, "r")) == 0) buf[0] = 0;
 			else fclose(fp);
 		}
 		if (buf[0] == 0) return JS_THROW(Error, "[load] fail to locate the file");
