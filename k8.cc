@@ -1,4 +1,4 @@
-#define K8_VERSION "0.1.4-r46" // known to work with V8-3.16.3
+#define K8_VERSION "0.1.4-r47" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -178,8 +178,6 @@ typedef struct {
 static inline void set_length(const v8::Handle<v8::Object> &obj, const kvec8_t *v)
 {
 	obj->SetIndexedPropertiesToExternalArrayData(v->a, v->eta, v->n >> v->tshift);
-//	obj->Set(JS_STR("length"), v8::Int32::New(v->n >> v->tshift));
-//	obj->Set(JS_STR("byteLength"), v8::Int32::New(v->n));
 }
 
 static inline void kv_set_type(kvec8_t *v, const char *type)
@@ -323,6 +321,27 @@ JS_METHOD(k8_bytes_toString, args)
 	v8::HandleScope scope;
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	return scope.Close(v8::String::New((char*)a->a, a->n));
+}
+
+v8::Handle<v8::Value> k8_bytes_length_getter(v8::Local<v8::String> property, const v8::AccessorInfo &info)
+{
+	kvec8_t *a = LOAD_PTR(info, 0, kvec8_t*);
+	return v8::Integer::New(a->n >> a->tshift);
+}
+
+void k8_bytes_length_setter(v8::Local<v8::String> property, v8::Local<v8::Value> value, const v8::AccessorInfo &info)
+{
+	kvec8_t *a = LOAD_PTR(info, 0, kvec8_t*);
+	int32_t n_old = a->n;
+	a->n = value->Int32Value() << a->tshift;
+	if (a->n > a->m) kv_recapacity(a, a->n);
+	if (n_old != a->n) set_length(info.This(), a);
+}
+
+v8::Handle<v8::Value> k8_bytes_byteLength_getter(v8::Local<v8::String> property, const v8::AccessorInfo &info)
+{
+	kvec8_t *a = LOAD_PTR(info, 0, kvec8_t*);
+	return v8::Integer::New(a->n);
 }
 
 /**********************************************
@@ -627,15 +646,20 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		v8::HandleScope scope;
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_bytes);
 		ft->SetClassName(JS_STR("Bytes"));
-		ft->InstanceTemplate()->SetInternalFieldCount(1);
+
+		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
+		ot->SetInternalFieldCount(1);
+		ot->SetAccessor(JS_STR("length"), k8_bytes_length_getter, k8_bytes_length_setter, v8::Handle<v8::Value>(), v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::DontDelete));
+		ot->SetAccessor(JS_STR("byteLength"), k8_bytes_byteLength_getter, 0, v8::Handle<v8::Value>(), v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::DontDelete));
+
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
 		pt->Set("size", v8::FunctionTemplate::New(k8_bytes_size));
-		pt->Set("resize", v8::FunctionTemplate::New(k8_bytes_size));
 		pt->Set("capacity", v8::FunctionTemplate::New(k8_bytes_capacity));
 		pt->Set("cast", v8::FunctionTemplate::New(k8_bytes_cast));
 		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
 		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
+
 		global->Set("Bytes", ft);	
 	}
 	{ // add the 'File' object
