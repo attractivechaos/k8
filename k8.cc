@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.0-r52" // known to work with V8-3.16.3
+#define K8_VERSION "0.2.0-r53" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -256,7 +256,7 @@ JS_METHOD(k8_bytes_set, args)
 #define _extend_vec_(_l_) do { \
 		if (pos + (int32_t)(_l_) >= a->m) \
 			kv_recapacity(a, pos + (_l_)); \
-		if (pos + (int32_t)(_l_) >= a->n) { \
+		if (pos + (int32_t)(_l_) >= a->n >> a->tshift << a->tshift) { \
 			a->n = pos + (_l_); \
 			set_length(args.This(), a); \
 		} \
@@ -267,27 +267,39 @@ JS_METHOD(k8_bytes_set, args)
 	kvec8_t *a = LOAD_PTR(args, 0, kvec8_t*);
 	if (args.Length() == 0) return v8::Undefined();
 	int cnt = 0;
-	int32_t pos = args.Length() >= 2? args[1]->Int32Value() : a->n;
-	if (args[0]->IsUint32()) {
-		_extend_vec_(1);
-		a->a[pos] = args[0]->Int32Value();
+	int32_t pos = args.Length() >= 2? args[1]->Int32Value() : a->n>>a->tshift;
+	if (args[0]->IsNumber()) {
+		_extend_vec_(1<<a->tshift);
+		if (a->eta == v8::kExternalUnsignedByteArray) a->a[pos] = args[0]->Uint32Value();
+		else if (a->eta == v8::kExternalDoubleArray) ((double*)a->a)[pos] = args[0]->NumberValue();
+		else if (a->eta == v8::kExternalFloatArray) ((float*)a->a)[pos] = args[0]->NumberValue();
+		else if (a->eta == v8::kExternalByteArray) ((int8_t*)a->a)[pos] = args[0]->Int32Value();
+		else if (a->eta == v8::kExternalIntArray) ((int32_t*)a->a)[pos] = args[0]->Int32Value();
+		else if (a->eta == v8::kExternalUnsignedIntArray) ((uint32_t*)a->a)[pos] = args[0]->Uint32Value();
+		else if (a->eta == v8::kExternalShortArray) ((int16_t*)a->a)[pos] = args[0]->Int32Value();
+		else if (a->eta == v8::kExternalUnsignedShortArray) ((uint16_t*)a->a)[pos] = args[0]->Uint32Value();
 	} else if (args[0]->IsString()) {
 		v8::String::AsciiValue str(args[0]);
 		const char *cstr = *str;
 		_extend_vec_(str.length());
 		for (int i = 0; i < str.length(); ++i) a->a[i+pos] = uint8_t(cstr[i]);
 	} else if (args[0]->IsArray()) {
+		unsigned i;
 		v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(args[0]);
-		_extend_vec_(array->Length());
-		for (unsigned i = 0; i < array->Length(); ++i) {
-			v8::Handle<v8::Value> tmp = array->Get(v8::Integer::New(i));
-			a->a[i+pos] = tmp->IsUint32()? tmp->Int32Value() : 0;
-		}
+		_extend_vec_(array->Length()<<a->tshift);
+		if (a->eta == v8::kExternalUnsignedByteArray) for (i = 0; i < array->Length(); ++i) a->a[pos + i] = array->Get(v8::Integer::New(i))->Uint32Value();
+		else if (a->eta == v8::kExternalDoubleArray) for (i = 0; i < array->Length(); ++i) ((double*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->NumberValue();
+		else if (a->eta == v8::kExternalFloatArray) for (i = 0; i < array->Length(); ++i) ((float*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->NumberValue();
+		else if (a->eta == v8::kExternalByteArray) for (i = 0; i < array->Length(); ++i) ((int8_t*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->Int32Value();
+		else if (a->eta == v8::kExternalIntArray) for (i = 0; i < array->Length(); ++i) ((int32_t*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->Int32Value();
+		else if (a->eta == v8::kExternalUnsignedIntArray) for (i = 0; i < array->Length(); ++i) ((uint32_t*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->Uint32Value();
+		else if (a->eta == v8::kExternalShortArray) for (i = 0; i < array->Length(); ++i) ((int16_t*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->Int32Value();
+		else if (a->eta == v8::kExternalUnsignedShortArray) for (i = 0; i < array->Length(); ++i) ((uint16_t*)a->a)[pos + i] = array->Get(v8::Integer::New(i))->Uint32Value();
 	} else if (args[0]->IsObject()) {
 		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 		kvec8_t *a2 = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
 		_extend_vec_(a2->n);
-		for (int32_t i = 0; i < a2->n; ++i) a->a[i+pos] = a2->a[i];
+		memcpy(a->a + (pos << a->tshift), a2->a, a2->n);
 	}
 	return scope.Close(v8::Integer::New(cnt));
 }
