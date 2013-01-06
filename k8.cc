@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.0-r50" // known to work with V8-3.16.3
+#define K8_VERSION "0.2.0-r52" // known to work with V8-3.16.3
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -254,8 +254,9 @@ JS_METHOD(k8_bytes_destroy, args)
 JS_METHOD(k8_bytes_set, args)
 {
 #define _extend_vec_(_l_) do { \
-		if (pos + (int32_t)(_l_) >= a->n) { \
+		if (pos + (int32_t)(_l_) >= a->m) \
 			kv_recapacity(a, pos + (_l_)); \
+		if (pos + (int32_t)(_l_) >= a->n) { \
 			a->n = pos + (_l_); \
 			set_length(args.This(), a); \
 		} \
@@ -511,7 +512,7 @@ JS_METHOD(k8_file_read, args) // File::read(), read(buf, offset, length)
 		long off = args[1]->Int32Value(), len = args[2]->Int32Value();
 		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
 		kvec8_t *kv = reinterpret_cast<kvec8_t*>(b->GetAlignedPointerFromInternalField(0));
-		if (len + off > kv->n) kv_recapacity(kv, len + off);
+		if (len + off > kv->m) kv_recapacity(kv, len + off);
 		len = ks_read(fp, ks, kv->a + off, len, gzread);
 		if (len + off > kv->n) {
 			kv->n = len + off;
