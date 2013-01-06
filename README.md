@@ -75,20 +75,34 @@ the memory to avoid memory leaks.
 
 `Bytes` provides a byte array. It has the following methods:
 
-    // Create a zero-sized byte array
-    new Bytes()
+	// Create an array of type $type in length $len. $type can be: int8_t, uint8_t, int16_t,
+	// uint16_t, int32_t, uint32_t, float or double.
+	new Bytes(len, type)
 
-	// Create a byte array of length $len
+	// Equivalent to 'new Bytes(len, "uint8_t")'
 	new Bytes(len)
 
-	// Get the size of the array
-	int Bytes.prototype.size()
+    // Equivalent to 'new Bytes(0, "uint8_t")'
+    new Bytes()
 
-	// Set the size of the array to $len
-	int Bytes.prototype.size(len)
+	// Property: get/set length of the array
+	.length
 
-	// The index operator. If $pos goes beyond size(), undefined will be returned.
+	// Property: get/set the max capacity of the array
+	.capacity
+
+	// The index operator. If $pos goes beyond .length, undefined will be returned.
 	int obj[pos]
+
+	// Change the array type to $type, equivalent to changing the pointer type. .length and
+	// .capacity may be changed if the size of element is changed.
+	Bytes.prototype.cast(type)
+
+	// Equivalent to 'Bytes.prototype.cast("uint8_t")'
+	Bytes.prototype.cast()
+
+	// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
+	Bytes.prototype.destroy()
 
 	// Replace the byte array starting from $offset to $data, where $data can be a number,
 	// a string, an array or Bytes. The size of the array is modified if the new array
@@ -101,9 +115,6 @@ the memory to avoid memory leaks.
 
 	// Convert the byte array to string
 	Bytes.prototype.toString()
-
-	// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
-	Bytes.prototype.destroy()
 
 ###The File Object
 
@@ -130,13 +141,16 @@ the memory to avoid memory leaks.
 	// This method replies on C's fwrite() for buffering.
 	int File.prototype.write(data)
 
-	// Read a line to $bytes using $sep as the separator. In particular, $sep==0 sets the
-	// separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
-	// $sep is a string, the first character in the string is the separator. Return the
-	// line length or -1 if reaching end-of-file.
+	// Read a line to $bytes starting from $offset, using $sep as the separator. $sep==0 sets
+	// the separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
+	// $sep is a string, the first character in the string is the separator. Return the line
+	// length or -1 if reaching end-of-file.
+	int File.prototype.readline(bytes, sep, offset)
+
+	// Equivalent to 'File.prototype.readline(bytes, sep, 0)'
 	int File.prototype.readline(bytes, sep)
 
-	// Equivalent to 'File.prototype.readline(bytes, 2)'
+	// Equivalent to 'File.prototype.readline(bytes, 2, 0)'
 	int File.prototype.readline(bytes)
 
 	// Close the file
