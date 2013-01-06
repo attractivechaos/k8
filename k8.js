@@ -257,7 +257,7 @@ Fastx.prototype.read = function() {
 	while ((c = f.read()) != -1 && c != 62 && c != 43 && c != 64) {
 		if (c == 10) continue; // skip empty lines
 		this.s.set(c);
-		f.readline(this.s, 2, true); // read the rest of the line
+		f.readline(this.s, 2, this.s.length); // read the rest of the line
 	}
 	if (c == 62 || c == 64) this._last = c; // the first header char has been read
 	if (c != 43) return this.s.length; // FASTA
@@ -265,7 +265,7 @@ Fastx.prototype.read = function() {
 	c = f.readline(this._line); // skip the rest of '+' line
 	if (c < 0) return -2; // error: no quality string
 	var size = this.s.length;
-	while (f.readline(this.q, 2, true) >= 0 && this.q.length < size);
+	while (f.readline(this.q, 2, this.q.length) >= 0 && this.q.length < size);
 	f._last = 0; // we have not come to the next header line
 	if (this.q.length != size) return -2; // error: qual string is of a different length
 	return size;
