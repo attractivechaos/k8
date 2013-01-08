@@ -116,6 +116,34 @@ Math.erfc = function(x)
 
 Math.normald = function(x) { return .5 * Math.erfc(-x * 0.707106781186547524400844362104849039); }
 
+Math.spearman = function(a)
+{
+	function aux_func(t) {
+		return t == 1? 0 : (t * t - 1) * t / 12
+	}
+	var x = [], T = [], S = [];
+	for (var i = 0; i < a.length; ++i)
+		x[i] = [a[i][0], a[i][1], 0, 0]
+	for (var k = 0; k < 2; ++k) {
+		x.sort(function(a,b){return a[k]<b[k]});
+		var same = 1;
+		T[k] = 0;
+		for (var i = 1; i <= x.length; ++i) {
+			if (i < x.length && x[i-1][k] == x[i][k]) ++same;
+			else {
+				var rank = (i<<1) - same + 1;
+				for (var j = i - same; j < i; ++j) x[j][k+2] = rank;
+				if (same > 1) T[k] += aux_func(same), same = 1;
+			}
+		}
+		S[k] = aux_func(x.length) - T[k];
+	}
+	var sum = 0.;
+	for (var i = 0; i < x.length; ++i)
+		sum += .25 * (x[i][2] - x[i][3]) * (x[i][2] - x[i][3]);
+	return .5 * (S[0] + S[1] - sum) / Math.sqrt(S[0] * S[1]);
+}
+
 /*********************
  * Matrix operations *
  *********************/
