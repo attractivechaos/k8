@@ -304,6 +304,45 @@ Fastx.prototype.destroy = function() {
 	if (typeof(this._file.close) == 'object') this._file.close();
 }
 
+function intv_ovlp(intv, bits)
+{
+	if (typeof bits == "undefined") bits = 13;
+	intv.sort(function(a,b) {return a[0]-b[0];});
+	// merge overlapping regions
+	var j = 0;
+	for (var i = 1; i < intv.length; ++i) {
+		if (intv[j][1] >= intv[i][0])
+			intv[j][1] = intv[j][1] > intv[i][1]? intv[j][1] : intv[i][1];
+		else intv[++j] = [intv[i][0], intv[i][1]];
+	}
+	intv.length = j + 1;
+	// create the index
+	var idx = [], max = 0;
+	for (var i = 0; i < intv.length; ++i) {
+		var b = intv[i][0]>>bits;
+		var e = (intv[i][1]-1)>>bits;
+		if (b != e) {
+			for (var j = b; j <= e; ++j)
+				if (idx[j] == null) idx[j] = i;
+		} else if (idx[b] == null) idx[b] = i;
+		max = max > e? max : e;
+	}
+	return function(_b, _e) { // closure
+		var x = _b >> bits;
+		if (x > max) return false;
+		var off = idx[x];
+		if (off == null) {
+			var i;
+			for (i = ((_e - 1) >> bits) - 1; i >= 0; --i)
+				if (idx[i] != null) break;
+			off = i < 0? 0 : idx[i];
+		}
+		for (var i = off; i < intv.length && intv[i][0] < _e; ++i)
+			if (intv[i][1] > _b) return true;
+		return false;
+	}
+}
+
 /**************************
  * Bioinformatics related *
  **************************/
