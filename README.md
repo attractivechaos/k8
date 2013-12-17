@@ -32,6 +32,7 @@ file reading and a `Bytes` object for flexible binary storage.
 You need to first compile V8 and then compile and link K8. Here is the full procedure:
 
 	git clone https://github.com/v8/v8             # download V8
+	(cd v8; git checkout 3.16.4)                   # k8 only works with 3.16.x
 	(cd v8; make dependencies; make x64.release)   # compile V8
 	g++ -O2 -Wall -o k8 -Iv8/include k8.cc -lpthread -lz v8/out/*/libv8_{base,snapshot}.a
 
