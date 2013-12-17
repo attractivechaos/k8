@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.0-r53" // known to work with V8-3.16.3
+#define K8_VERSION "0.2.1-r57" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -33,7 +33,7 @@
  *** Fundamental V8 routines ***
  *******************************/
 
-const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
+inline const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
 {
 	return *str? *str : "<N/A>";
 }
@@ -75,6 +75,7 @@ bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool 
 {
 	v8::HandleScope handle_scope;
 	v8::TryCatch try_catch;
+	if (source == v8::Handle<v8::String>()) return false;
 	v8::Handle<v8::Script> script = v8::Script::Compile(source, name);
 	if (script.IsEmpty()) {
 		k8_exception(&try_catch);
@@ -99,7 +100,10 @@ bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool 
 v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Copied from v8/shell.cc
 {
 	FILE* file = fopen(name, "rb");
-	if (file == NULL) return v8::Handle<v8::String>();
+	if (file == NULL) {
+		fprintf(stderr, "ERROR: fail to open file '%s'.\n", name);
+		return v8::Handle<v8::String>();
+	}
 
 	fseek(file, 0, SEEK_END);
 	int size = ftell(file);
@@ -130,6 +134,18 @@ JS_METHOD(k8_print, args) // print(): print to stdout; TAB demilited if multiple
 		fputs(k8_cstr(str), stdout);
 	}
 	putchar('\n');
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_warn, args) // print(): print to stdout; TAB demilited if multiple arguments are provided
+{
+	for (int i = 0; i < args.Length(); i++) {
+		v8::HandleScope handle_scope;
+		if (i) fputc('\t', stderr);
+		v8::String::AsciiValue str(args[i]);
+		fputs(k8_cstr(str), stderr);
+	}
+	fputc('\n', stderr);
 	return v8::Undefined();
 }
 
@@ -636,6 +652,7 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 {
 	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
 	global->Set(JS_STR("print"), v8::FunctionTemplate::New(k8_print));
+	global->Set(JS_STR("warn"), v8::FunctionTemplate::New(k8_warn));
 	global->Set(JS_STR("exit"), v8::FunctionTemplate::New(k8_exit));
 	global->Set(JS_STR("load"), v8::FunctionTemplate::New(k8_load));
 	{ // add the 'Bytes' object
