@@ -144,6 +144,75 @@ Math.spearman = function(a)
 	return .5 * (S[0] + S[1] - sum) / Math.sqrt(S[0] * S[1]);
 }
 
+Math.fisher_exact = function(n11, n12, n21, n22)
+{
+	function lbinom(n, k) {
+		if (k == 0 || n == k) return 0;
+		return Math.lgamma(n+1) - Math.lgamma(k+1) - Math.lgamma(n-k+1);
+	}
+
+	function hypergeo(n11, n1_, n_1, n) {
+		return Math.exp(lbinom(n1_, n11) + lbinom(n-n1_, n_1-n11) - lbinom(n, n_1));
+	}
+
+	function hypergeo_acc(n11, n1_, n_1, n, aux) {
+		if (n1_ || n_1 || n) {
+			aux.n11 = n11; aux.n1_ = n1_; aux.n_1 = n_1; aux.n = n;
+		} else { // then only n11 changed; the rest fixed
+			if (n11%11 && n11 + aux.n - aux.n1_ - aux.n_1) {
+				if (n11 == aux.n11 + 1) { // incremental
+					aux.p *= (aux.n1_ - aux.n11) / n11
+						* (aux.n_1 - aux.n11) / (n11 + aux.n - aux.n1_ - aux.n_1);
+					aux.n11 = n11;
+					return aux.p;
+				}
+				if (n11 == aux.n11 - 1) { // incremental
+					aux.p *= aux.n11 / (aux.n1_ - n11)
+						* (aux.n11 + aux.n - aux.n1_ - aux.n_1) / (aux.n_1 - n11);
+					aux.n11 = n11;
+					return aux.p;
+				}
+			}
+			aux.n11 = n11;
+		}
+		aux.p = hypergeo(aux.n11, aux.n1_, aux.n_1, aux.n);
+		return aux.p;
+	}
+
+	var i, j, max, min;
+	var p, q, left, right, two;
+	var _aux = { n11:0, n1_:0, n_1:0, n:0, p:0. };
+	var n1_, n_1, n;
+
+	n1_ = n11 + n12; n_1 = n11 + n21; n = n11 + n12 + n21 + n22; // calculate n1_, n_1 and n
+	max = (n_1 < n1_) ? n_1 : n1_; // max n11, for right tail
+	min = n1_ + n_1 - n;
+	if (min < 0) min = 0; // min n11, for left tail
+	if (min == max) return [1., 1., 1.]; // no need to do test
+	q = hypergeo_acc(n11, n1_, n_1, n, _aux); // the probability of the current table
+	// left tail
+	p = hypergeo_acc(min, 0, 0, 0, _aux);
+	for (left = 0., i = min + 1; p < 0.99999999 * q; ++i) // loop until underflow
+		left += p, p = hypergeo_acc(i, 0, 0, 0, _aux);
+	--i;
+	if (p < 1.00000001 * q) left += p;
+	else --i;
+	// right tail
+	p = hypergeo_acc(max, 0, 0, 0, _aux);
+	for (right = 0., j = max - 1; p < 0.99999999 * q; --j) // loop until underflow
+		right += p, p = hypergeo_acc(j, 0, 0, 0, _aux);
+	++j;
+	if (p < 1.00000001 * q) right += p;
+	else ++j;
+	// two-tail
+	two = left + right;
+	if (two > 1.) two = 1.;
+	// adjust left and right
+	if (Math.abs(i - n11) < Math.abs(j - n11)) right = 1. - left + q;
+	else left = 1.0 - right + q;
+	return [two, left, right];
+}
+
 /*********************
  * Matrix operations *
  *********************/
