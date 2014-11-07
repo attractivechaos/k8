@@ -51,6 +51,31 @@ while ((c = getopt(arguments, "i:xy")) != null) {
 }
 */
 
+// print an object in a format similar to JSON
+function obj2str(o)
+{
+	if (typeof(o) != 'object') {
+		return o.toString();
+	} else if (o == null) {
+		return "null";
+	} else if (Array.isArray(o)) {
+		var s = "[";
+		for (var i = 0; i < o.length; ++i) {
+			if (i) s += ',';
+			s += obj2str(o[i]);
+		}
+		return s + "]";
+	} else {
+		var i = 0, s = "{";
+		for (var key in o) {
+			if (i++) s += ',';
+			s += key + ":";
+			s += obj2str(o[key]);
+		}
+		return s + "}";
+	}
+}
+
 /*********************
  * Special functions *
  *********************/
