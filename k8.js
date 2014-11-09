@@ -341,6 +341,14 @@ Math.m.solve = function(a, b) { // Gauss-Jordan elimination, translated from gau
 	return 0;
 }
 
+Math.m.dup = function (a)
+{
+	var b = [];
+	for (var i = 0; i < a.length; ++i)
+		b[i] = a[i].slice(0);
+	return b;
+}
+
 Math.m.eigen = function(a)
 {
 	function SQR(a) { return a * a; }
@@ -481,6 +489,39 @@ Math.m.eigen = function(a)
 	tred2(a, ev, e);
 	tqli(ev, e, a);
 	return ev;
+}
+
+Math.m.Laplacian = function(a, is_norm)
+{
+	var d = [], n = a.length, L = [];
+	for (var i = 0; i < n; ++i) {
+		var s = 0;
+		for (var j = 0; j < n; ++j)
+			s += a[i][j];
+		if (s == 0) return null;
+		d[i] = s;
+		L[i] = [];
+	}
+	if (is_norm) {
+		for (var i = 0; i < n; ++i)
+			d[i] = 1. / Math.sqrt(d[i]);
+		for (var i = 0; i < n; ++i) {
+			for (var j = 0; j < i; ++j)
+				L[i][j] = -a[i][j] * d[i] * d[j];
+			L[i][i] = 1 - a[i][i] * d[i] * d[i];
+			for (var j = i + 1; j < n; ++j)
+				L[i][j] = -a[i][j] * d[i] * d[j];
+		}
+	} else {
+		for (var i = 0; i < n; ++i) {
+			for (var j = 0; j < i; ++j)
+				L[i][j] = -a[i][j];
+			L[i][i] = d[i] - a[i][i];
+			for (var j = i + 1; j < n; ++j)
+				L[i][j] = -a[i][j];
+		}
+	}
+	return L;
 }
 
 /* // Math.m example
