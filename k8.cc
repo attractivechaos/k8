@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.1-r57" // known to work with V8-3.16.14
+#define K8_VERSION "0.2.x-r64-dirty" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -33,7 +33,7 @@
  *** Fundamental V8 routines ***
  *******************************/
 
-inline const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
+static inline const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
 {
 	return *str? *str : "<N/A>";
 }
@@ -596,6 +596,78 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
 }
 
+/**********************
+ *** Set object ***
+ **********************/
+
+#include "khash.h"
+KHASH_SET_INIT_STR(str)
+typedef khash_t(str) *strset_t;
+
+JS_METHOD(k8_set, args)
+{
+	v8::HandleScope scope;
+	ASSERT_CONSTRUCTOR(args);
+	strset_t h;
+	h = kh_init(str);
+	SAVE_PTR(args, 0, h);
+	return args.This();
+}
+
+JS_METHOD(k8_set_put, args)
+{
+	v8::HandleScope scope;
+	strset_t h = LOAD_PTR(args, 0, strset_t);
+	if (args.Length()) {
+		v8::String::AsciiValue s(args[0]);
+		const char *cstr = k8_cstr(s);
+		int absent;
+		khint_t k = kh_put(str, h, cstr, &absent);
+		if (absent)
+			kh_key(h, k) = strdup(cstr);
+	} else return JS_ERROR("misused of Set.prototype.put()");
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_set_test, args)
+{
+	v8::HandleScope scope;
+	strset_t h = LOAD_PTR(args, 0, strset_t);
+	if (args.Length()) {
+		v8::String::AsciiValue s(args[0]);
+		const char *cstr = k8_cstr(s);
+		if (kh_get(str, h, cstr) == kh_end(h))
+			return scope.Close(v8::Boolean::New(false));
+		else return scope.Close(v8::Boolean::New(true));
+	} else return JS_ERROR("misused of Set.prototype.test()");
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_set_del, args)
+{
+	v8::HandleScope scope;
+	strset_t h = LOAD_PTR(args, 0, strset_t);
+	if (args.Length()) {
+		v8::String::AsciiValue s(args[0]);
+		const char *cstr = k8_cstr(s);
+		khint_t k = kh_get(str, h, cstr);
+		if (k < kh_end(h)) kh_del(str, h, k);
+	} else return JS_ERROR("misused of Set.prototype.del()");
+	return v8::Undefined();
+}
+
+JS_METHOD(k8_set_destroy, args)
+{
+	v8::HandleScope scope;
+	strset_t h = LOAD_PTR(args, 0, strset_t);
+	khint_t k;
+	for (k = 0; k != kh_end(h); ++k)
+		if (kh_exist(h, k)) free((char*)kh_key(h, k));
+	kh_destroy(str, h);
+	SAVE_PTR(args, 0, 0);
+	return v8::Undefined();
+}
+
 /***********************
  *** Getopt from BSD ***
  ***********************/
@@ -685,6 +757,18 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
 		pt->Set("destroy", v8::FunctionTemplate::New(k8_file_close));
 		global->Set("File", ft);	
+	}
+	{ // add the 'Set' object
+		v8::HandleScope scope;
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_set);
+		ft->SetClassName(JS_STR("Set"));
+		ft->InstanceTemplate()->SetInternalFieldCount(1);
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set("put", v8::FunctionTemplate::New(k8_set_put));
+		pt->Set("del", v8::FunctionTemplate::New(k8_set_del));
+		pt->Set("test", v8::FunctionTemplate::New(k8_set_test));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_set_destroy));
+		global->Set("Set", ft);	
 	}
 	return v8::Context::New(NULL, global);
 }
