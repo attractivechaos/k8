@@ -1,13 +1,13 @@
 FAQ
 ---
 
-####1. What is K8?
+#### 1. What is K8?
 
 K8 is a Javascript shell based on Google's [V8 Javascript engine][1]. It adds
 the support of flexible byte arrays and file I/O. K8 is implemented in one C++
 source file. The only dependency is zlib in addition to V8.
 
-####2. There are many Javascript shells with much richer features. What makes K8 special?
+#### 2. There are many Javascript shells with much richer features. What makes K8 special?
 
 To some extent, [Node.js][2], [Narwhal][3], [SilkJS][4], [TeaJS][5] and
 [Sorrow.js][6] are all Javascript shells. They not only provide binary storage
@@ -25,9 +25,10 @@ we even do not have a JS shell matching the usability of C, let alone
 high-level programming languages such as Perl and Python.
 
 K8 aims to provide C-like file I/O APIs. It adds a `File` object for buffered
-file reading and a `Bytes` object for flexible binary storage.
+file reading, a `Bytes` object for flexible binary storage and a `Map` object
+for a hash map without hitting the memory limit of V8.
 
-####3. How to compile K8? Are there compiled binaries?
+#### 3. How to compile K8? Are there compiled binaries?
 
 You need to first compile V8 and then compile and link K8. Here is the full procedure:
 
@@ -42,7 +43,7 @@ maybe in a deeper directory, depending on the OS.
 Alternatively, you may download the compiled binaries for Mac and Linux from
 [SourceForge][11]. The source code is also included.
 
-####4. An earlier version of K8 implemented a generic buffered stream. Why has it been removed?
+#### 4. An earlier version of K8 implemented a generic buffered stream. Why has it been removed?
 
 To implement a generic buffered stream, we need to call a Javascript `read`
 function in C++ and transform between Javascript and C++ data representation.
@@ -58,7 +59,7 @@ All the following objects manage some memory outside the V8 garbage collector.
 It is important to call the `close()` or the `destroy()` methods to deallocate
 the memory to avoid memory leaks.
 
-###Example
+### Example
 
     var x = new Bytes(), y = new Bytes();
     x.set('foo'); x.set([0x20,0x20]); x.set('bar'); x.set('F', 0); x[3]=0x2c;
@@ -72,7 +73,7 @@ the memory to avoid memory leaks.
       s.close(); x.destroy();
     }
 
-###The Bytes Object
+### The Bytes Object
 
 `Bytes` provides a byte array. It has the following methods:
 
@@ -117,7 +118,7 @@ the memory to avoid memory leaks.
 	// Convert the byte array to string
 	Bytes.prototype.toString()
 
-###The File Object
+### The File Object
 
 `File` provides buffered file I/O. It has the following methods:
 
@@ -156,6 +157,29 @@ the memory to avoid memory leaks.
 
 	// Close the file
 	File.prototype.close()
+
+### The Map Object
+
+`Map` provides a hash map implementation without using memory managed by V8. This can be helpful
+when we want to stage a huge hash table in memory. `Map` has the following methods:
+
+	// Initialize a hash map
+	new Map()
+
+	// Put a key-value string pair to a hash map
+	Map.prototype.put(key, value)
+
+	// Equivalent to 'Map.prototype.put(key, "")'
+	Map.prototype.put(key)
+
+	// Get a key. Return 'null' if 'key' is non-existing
+	string Map.prototype.get(key)
+
+	// Delete a key.
+	Map.prototype.del(key)
+
+	// Deallocate memory
+	Map.prototype.destroy()
 
 [1]: http://code.google.com/p/v8/
 [2]: http://nodejs.org/
