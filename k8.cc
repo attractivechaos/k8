@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.x-r64-dirty" // known to work with V8-3.16.14
+#define K8_VERSION "0.2.2-r65" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -601,20 +601,21 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
  **********************/
 
 #include "khash.h"
-KHASH_SET_INIT_STR(str)
+KHASH_MAP_INIT_STR(str, kh_cstr_t)
 typedef khash_t(str) *strset_t;
 
-JS_METHOD(k8_set, args)
+static const char *k8_empty_str = "";
+
+JS_METHOD(k8_map, args)
 {
 	v8::HandleScope scope;
 	ASSERT_CONSTRUCTOR(args);
-	strset_t h;
-	h = kh_init(str);
+	strset_t h = kh_init(str);
 	SAVE_PTR(args, 0, h);
 	return args.This();
 }
 
-JS_METHOD(k8_set_put, args)
+JS_METHOD(k8_map_put, args)
 {
 	v8::HandleScope scope;
 	strset_t h = LOAD_PTR(args, 0, strset_t);
@@ -623,27 +624,21 @@ JS_METHOD(k8_set_put, args)
 		const char *cstr = k8_cstr(s);
 		int absent;
 		khint_t k = kh_put(str, h, cstr, &absent);
-		if (absent)
+		if (absent) {
 			kh_key(h, k) = strdup(cstr);
-	} else return JS_ERROR("misused of Set.prototype.put()");
+			kh_val(h, k) = k8_empty_str;
+		}
+		if (args.Length() > 1) {
+			v8::String::AsciiValue v(args[1]);
+			if (kh_val(h, k) != k8_empty_str)
+				free((char*)kh_val(h, k));
+			kh_val(h, k) = strdup(k8_cstr(v));
+		}
+	} else return JS_ERROR("misused Map.prototype.put()");
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_set_test, args)
-{
-	v8::HandleScope scope;
-	strset_t h = LOAD_PTR(args, 0, strset_t);
-	if (args.Length()) {
-		v8::String::AsciiValue s(args[0]);
-		const char *cstr = k8_cstr(s);
-		if (kh_get(str, h, cstr) == kh_end(h))
-			return scope.Close(v8::Boolean::New(false));
-		else return scope.Close(v8::Boolean::New(true));
-	} else return JS_ERROR("misused of Set.prototype.test()");
-	return v8::Undefined();
-}
-
-JS_METHOD(k8_set_del, args)
+JS_METHOD(k8_map_get, args)
 {
 	v8::HandleScope scope;
 	strset_t h = LOAD_PTR(args, 0, strset_t);
@@ -651,18 +646,39 @@ JS_METHOD(k8_set_del, args)
 		v8::String::AsciiValue s(args[0]);
 		const char *cstr = k8_cstr(s);
 		khint_t k = kh_get(str, h, cstr);
-		if (k < kh_end(h)) kh_del(str, h, k);
-	} else return JS_ERROR("misused of Set.prototype.del()");
+		return k == kh_end(h)? v8::Null() : scope.Close(v8::String::New(kh_val(h, k), strlen(kh_val(h, k))));
+	} else return JS_ERROR("misused Map.prototype.get()");
+}
+
+JS_METHOD(k8_map_del, args)
+{
+	v8::HandleScope scope;
+	strset_t h = LOAD_PTR(args, 0, strset_t);
+	if (args.Length()) {
+		v8::String::AsciiValue s(args[0]);
+		const char *cstr = k8_cstr(s);
+		khint_t k = kh_get(str, h, cstr);
+		if (k < kh_end(h)) {
+			free((char*)kh_key(h, k));
+			if (kh_val(h, k) != k8_empty_str)
+				free((char*)kh_val(h, k));
+			kh_del(str, h, k);
+		}
+	} else return JS_ERROR("misused Map.prototype.del()");
 	return v8::Undefined();
 }
 
-JS_METHOD(k8_set_destroy, args)
+JS_METHOD(k8_map_destroy, args)
 {
 	v8::HandleScope scope;
 	strset_t h = LOAD_PTR(args, 0, strset_t);
 	khint_t k;
 	for (k = 0; k != kh_end(h); ++k)
-		if (kh_exist(h, k)) free((char*)kh_key(h, k));
+		if (kh_exist(h, k)) {
+			free((char*)kh_key(h, k));
+			if (kh_val(h, k) != k8_empty_str)
+				free((char*)kh_val(h, k));
+		}
 	kh_destroy(str, h);
 	SAVE_PTR(args, 0, 0);
 	return v8::Undefined();
@@ -760,15 +776,15 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 	}
 	{ // add the 'Set' object
 		v8::HandleScope scope;
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_set);
-		ft->SetClassName(JS_STR("Set"));
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_map);
+		ft->SetClassName(JS_STR("Map"));
 		ft->InstanceTemplate()->SetInternalFieldCount(1);
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
-		pt->Set("put", v8::FunctionTemplate::New(k8_set_put));
-		pt->Set("del", v8::FunctionTemplate::New(k8_set_del));
-		pt->Set("test", v8::FunctionTemplate::New(k8_set_test));
-		pt->Set("destroy", v8::FunctionTemplate::New(k8_set_destroy));
-		global->Set("Set", ft);	
+		pt->Set("put", v8::FunctionTemplate::New(k8_map_put));
+		pt->Set("get", v8::FunctionTemplate::New(k8_map_get));
+		pt->Set("del", v8::FunctionTemplate::New(k8_map_del));
+		pt->Set("destroy", v8::FunctionTemplate::New(k8_map_destroy));
+		global->Set("Map", ft);	
 	}
 	return v8::Context::New(NULL, global);
 }
