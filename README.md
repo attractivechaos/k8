@@ -32,12 +32,14 @@ for a hash map without hitting the memory limit of V8.
 
 You need to first compile V8 and then compile and link K8. Here is the full procedure:
 
-	# download compilable V8 source code; K8 only works with v8-3.16
-	wget -O- https://github.com/attractivechaos/k8/releases/download/v0.2.1/v8-3.16.4.tar.bz2 | tar jxf -
-	# compile V8
-	cd v8-3.16.4 && make -j4 x64.release
-	# compile K8
-	g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_*.a"|grep -v nosnap`
+```sh
+# download compilable V8 source code; K8 only works with v8-3.16
+wget -O- https://github.com/attractivechaos/k8/releases/download/v0.2.1/v8-3.16.4.tar.bz2 | tar jxf -
+# compile V8
+cd v8-3.16.4 && make -j4 x64.release
+# compile K8
+g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_*.a"|grep -v nosnap`
+```
 
 Alternatively, you may download the precompiled binaries for Mac and Linux from
 the [release page][release].
@@ -60,125 +62,133 @@ the memory to avoid memory leaks.
 
 ### Example
 
-    var x = new Bytes(), y = new Bytes();
-    x.set('foo'); x.set([0x20,0x20]); x.set('bar'); x.set('F', 0); x[3]=0x2c;
-    print(x.toString())   // output: 'Foo, bar'
-    y.set('BAR'); x.set(y, 5)
-    print(x)              // output: 'Foo, BAR'
-    x.destroy(); y.destroy()
-    if (arguments.length) { // read and print file
-      var x = new Bytes(), s = new File(arguments[0]);
-      while (s.readline(x) >= 0) print(x)
-      s.close(); x.destroy();
-    }
+```javascript
+var x = new Bytes(), y = new Bytes();
+x.set('foo'); x.set([0x20,0x20]); x.set('bar'); x.set('F', 0); x[3]=0x2c;
+print(x.toString())   // output: 'Foo, bar'
+y.set('BAR'); x.set(y, 5)
+print(x)              // output: 'Foo, BAR'
+x.destroy(); y.destroy()
+if (arguments.length) { // read and print file
+  var x = new Bytes(), s = new File(arguments[0]);
+  while (s.readline(x) >= 0) print(x)
+  s.close(); x.destroy();
+}
+```
 
 ### The Bytes Object
 
 `Bytes` provides a byte array. It has the following methods:
 
-	// Create an array of type $type in length $len. $type can be: int8_t, uint8_t, int16_t,
-	// uint16_t, int32_t, uint32_t, float or double.
-	new Bytes(len, type)
+```javascript
+// Create an array of type $type in length $len. $type can be: int8_t, uint8_t, int16_t,
+// uint16_t, int32_t, uint32_t, float or double.
+new Bytes(len, type)
 
-	// Equivalent to 'new Bytes(len, "uint8_t")'
-	new Bytes(len)
+// Equivalent to 'new Bytes(len, "uint8_t")'
+new Bytes(len)
 
-    // Equivalent to 'new Bytes(0, "uint8_t")'
-    new Bytes()
+// Equivalent to 'new Bytes(0, "uint8_t")'
+new Bytes()
 
-	// Property: get/set length of the array
-	.length
+// Property: get/set length of the array
+.length
 
-	// Property: get/set the max capacity of the array
-	.capacity
+// Property: get/set the max capacity of the array
+.capacity
 
-	// The index operator. If $pos goes beyond .length, undefined will be returned.
-	int obj[pos]
+// The index operator. If $pos goes beyond .length, undefined will be returned.
+int obj[pos]
 
-	// Change the array type to $type, equivalent to changing the pointer type. .length and
-	// .capacity may be changed if the size of element is changed.
-	Bytes.prototype.cast(type)
+// Change the array type to $type, equivalent to changing the pointer type. .length and
+// .capacity may be changed if the size of element is changed.
+Bytes.prototype.cast(type)
 
-	// Equivalent to 'Bytes.prototype.cast("uint8_t")'
-	Bytes.prototype.cast()
+// Equivalent to 'Bytes.prototype.cast("uint8_t")'
+Bytes.prototype.cast()
 
-	// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
-	Bytes.prototype.destroy()
+// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
+Bytes.prototype.destroy()
 
-	// Replace the byte array starting from $offset to $data, where $data can be a number,
-	// a string, an array or Bytes. The size of the array is modified if the new array
-	// is larger. Return the number of modified bytes. If only one byte needs to be
-	// changed, using the [] operator gives better performance.
-    int Bytes.prototype.set(data, offset)
+// Replace the byte array starting from $offset to $data, where $data can be a number,
+// a string, an array or Bytes. The size of the array is modified if the new array
+// is larger. Return the number of modified bytes. If only one byte needs to be
+// changed, using the [] operator gives better performance.
+int Bytes.prototype.set(data, offset)
 
-	// Append $data to the byte array
-	int Bytes.prototype.set(data)
+// Append $data to the byte array
+int Bytes.prototype.set(data)
 
-	// Convert the byte array to string
-	Bytes.prototype.toString()
+// Convert the byte array to string
+Bytes.prototype.toString()
+```
 
 ### The File Object
 
 `File` provides buffered file I/O. It has the following methods:
 
-	// Open $fileName under $mode. $mode is in the same syntax as fopen(). Integer $fileName for
-	// a file descriptor. In particular, 0 for STDIN, 1 for STDOUT and 2 for STDERR.
-	new File(fileName, mode)
+```javascript
+// Open $fileName under $mode. $mode is in the same syntax as fopen(). Integer $fileName for
+// a file descriptor. In particular, 0 for STDIN, 1 for STDOUT and 2 for STDERR.
+new File(fileName, mode)
 
-	// Equivalent to 'new File(fileName, "r")'
-	new File(fileName)
+// Equivalent to 'new File(fileName, "r")'
+new File(fileName)
 
-	// Equivalent to 'new File(0)'
-	new File()
+// Equivalent to 'new File(0)'
+new File()
 
-	// Read a byte. Return -1 if reaching end-of-file
-	int File.prototype.read()
+// Read a byte. Return -1 if reaching end-of-file
+int File.prototype.read()
 
-	// Read maximum $len bytes of data to $buf, starting from $offset. Return the number of
-	// bytes read to $buf. The size of $buf is unchanged unless it is smaller than $offset+$len.
-	int File.prototype.read(buf, offset, len)
+// Read maximum $len bytes of data to $buf, starting from $offset. Return the number of
+// bytes read to $buf. The size of $buf is unchanged unless it is smaller than $offset+$len.
+int File.prototype.read(buf, offset, len)
 
-	// Write $data, which can be a string or Bytes(). Return the number of written bytes.
-	// This method replies on C's fwrite() for buffering.
-	int File.prototype.write(data)
+// Write $data, which can be a string or Bytes(). Return the number of written bytes.
+// This method replies on C's fwrite() for buffering.
+int File.prototype.write(data)
 
-	// Read a line to $bytes starting from $offset, using $sep as the separator. $sep==0 sets
-	// the separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
-	// $sep is a string, the first character in the string is the separator. Return the line
-	// length or -1 if reaching end-of-file.
-	int File.prototype.readline(bytes, sep, offset)
+// Read a line to $bytes starting from $offset, using $sep as the separator. $sep==0 sets
+// the separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
+// $sep is a string, the first character in the string is the separator. Return the line
+// length or -1 if reaching end-of-file.
+int File.prototype.readline(bytes, sep, offset)
 
-	// Equivalent to 'File.prototype.readline(bytes, sep, 0)'
-	int File.prototype.readline(bytes, sep)
+// Equivalent to 'File.prototype.readline(bytes, sep, 0)'
+int File.prototype.readline(bytes, sep)
 
-	// Equivalent to 'File.prototype.readline(bytes, 2, 0)'
-	int File.prototype.readline(bytes)
+// Equivalent to 'File.prototype.readline(bytes, 2, 0)'
+int File.prototype.readline(bytes)
 
-	// Close the file
-	File.prototype.close()
+// Close the file
+File.prototype.close()
+```
 
 ### The Map Object
 
 `Map` provides a hash map implementation without using memory managed by V8. This can be helpful
 when we want to stage a huge hash table in memory. `Map` has the following methods:
 
-	// Initialize a hash map
-	new Map()
+```javascript
+// Initialize a hash map
+new Map()
 
-	// Put a key-value string pair to a hash map
-	Map.prototype.put(key, value)
+// Put a key-value string pair to a hash map
+Map.prototype.put(key, value)
 
-	// Equivalent to 'Map.prototype.put(key, "")'
-	Map.prototype.put(key)
+// Equivalent to 'Map.prototype.put(key, "")'
+Map.prototype.put(key)
 
-	// Get a key. Return 'null' if 'key' is non-existing
-	string Map.prototype.get(key)
+// Get a key. Return 'null' if 'key' is non-existing
+string Map.prototype.get(key)
 
-	// Delete a key.
-	Map.prototype.del(key)
+// Delete a key.
+Map.prototype.del(key)
 
-	// Deallocate memory
-	Map.prototype.destroy()
+// Deallocate memory
+Map.prototype.destroy()
+```
 
 [1]: http://code.google.com/p/v8/
 [2]: http://nodejs.org/
