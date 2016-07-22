@@ -1,4 +1,4 @@
-#define K8_VERSION "0.2.2-r65" // known to work with V8-3.16.14
+#define K8_VERSION "0.2.3-r67" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -596,9 +596,9 @@ JS_METHOD(k8_file_readline, args) // see iStream::readline(sep=line) for details
 	return ret >= 0? scope.Close(v8::Integer::New(dret)) : scope.Close(v8::Integer::New(ret));
 }
 
-/**********************
+/******************
  *** Set object ***
- **********************/
+ ******************/
 
 #include "khash.h"
 KHASH_MAP_INIT_STR(str, kh_cstr_t)
@@ -792,9 +792,19 @@ static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
 int main(int argc, char* argv[])
 {
 	v8::V8::SetFlagsFromCommandLine(&argc, argv, true);
+
+	// set --max_old_space_size. We have to do it before CreateShellContext(), I guess.
+	int c;
+	char flag_buf[256], *size = 0;
+	while ((c = getopt(argc, argv, "ve:E:M:")) >= 0)
+		if (c == 'M') size = optarg;
+	strcat(strcpy(flag_buf, "--max_old_space_size="), size? size : "16384");
+	v8::V8::SetFlagsFromString(flag_buf, strlen(flag_buf));
+	opterr = optind = 1;
+
 	int ret = 0;
 	if (argc == 1) {
-		fprintf(stderr, "Usage: k8 [-v] [-e jsSrc] [-E jsSrc] <src.js> [arguments]\n");
+		fprintf(stderr, "Usage: k8 [-v] [-e jsSrc] [-E jsSrc] [-M maxRSS] <src.js> [arguments]\n");
 		return 1;
 	}
 	{
@@ -805,8 +815,7 @@ int main(int argc, char* argv[])
 			return 1;
 		}
 		context->Enter();
-		int i, c;
-		while ((c = getopt(argc, argv, "ve:E:")) >= 0) // parse k8 related command line options
+		while ((c = getopt(argc, argv, "ve:E:M:")) >= 0) // parse k8 related command line options
 			if (c == 'e' || c == 'E') {
 				if (!k8_execute(JS_STR(optarg), JS_STR("CLI"), (c == 'E'))) { // note the difference between 'e' and 'E'
 					ret = 1;
@@ -816,7 +825,7 @@ int main(int argc, char* argv[])
 		if (!ret && optind != argc) {
 			v8::HandleScope scope2;
 			v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);
-			for (i = optind + 1; i < argc; ++i)
+			for (int i = optind + 1; i < argc; ++i)
 				args->Set(v8::Integer::New(i - optind - 1), JS_STR(argv[i]));
 			context->Global()->Set(JS_STR("arguments"), args);
 			if (!k8_execute(k8_readfile(argv[optind]), JS_STR(argv[optind]), false)) ret = 1;

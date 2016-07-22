@@ -32,16 +32,15 @@ for a hash map without hitting the memory limit of V8.
 
 You need to first compile V8 and then compile and link K8. Here is the full procedure:
 
-	git clone https://github.com/v8/v8             # download V8
-	(cd v8; git checkout 3.16.4)                   # k8 only works with 3.16.x
-	(cd v8; make dependencies; make x64.release)   # compile V8
-	g++ -O2 -Wall -o k8 -Iv8/include k8.cc -lpthread -lz v8/out/*/libv8_{base,snapshot}.a
+	# download compilable V8 source code; K8 only works with v8-3.16
+	wget -O- https://github.com/attractivechaos/k8/releases/download/v0.2.1/v8-3.16.4.tar.bz2 | tar jxf -
+	# compile V8
+	cd v8-3.16.4 && make -j4 x64.release
+	# compile K8
+	g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_*.a"|grep -v nosnap`
 
-The two `libv8*.a` files should always be placed somewhere in `v8/out`, but
-maybe in a deeper directory, depending on the OS.
-
-Alternatively, you may download the compiled binaries for Mac and Linux from
-[SourceForge][11]. The source code is also included.
+Alternatively, you may download the precompiled binaries for Mac and Linux from
+the [release page][release].
 
 #### 4. An earlier version of K8 implemented a generic buffered stream. Why has it been removed?
 
@@ -191,3 +190,5 @@ when we want to stage a huge hash table in memory. `Map` has the following metho
 [8]: http://nodejs.org/api/stream.html
 [9]: http://www.commonjs.org/specs/
 [11]: https://sourceforge.net/projects/lh3/files/
+[gyp]: https://gyp.gsrc.io/
+[release]: https://github.com/attractivechaos/k8/releases
