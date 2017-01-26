@@ -150,7 +150,7 @@ Math.spearman = function(a)
 	for (var i = 0; i < a.length; ++i)
 		x[i] = [parseFloat(a[i][0]), parseFloat(a[i][1]), 0, 0]
 	for (var k = 0; k < 2; ++k) {
-		x.sort(function(a,b){return a[k]<b[k]});
+		x.sort(function(a,b){return a[k]-b[k]});
 		var same = 1;
 		T[k] = 0;
 		for (var i = 1; i <= x.length; ++i) {
