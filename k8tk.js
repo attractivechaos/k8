@@ -2,6 +2,8 @@
  *** k8 library routines ***
  ***************************/
 
+/////////// General ///////////
+
 var getopt = function(args, ostr) {
 	var oli; // option letter list index
 	if (typeof(getopt.place) == 'undefined')
@@ -40,6 +42,8 @@ var getopt = function(args, ostr) {
 	return optopt;
 }
 
+/////////// Numerical ///////////
+
 Math.spearman = function(a)
 {
 	function aux_func(t) { return t == 1? 0 : (t * t - 1) * t / 12; }
@@ -64,6 +68,43 @@ Math.spearman = function(a)
 	for (var i = 0; i < x.length; ++i)
 		d2 += .25 * (x[i][2] - x[i][3]) * (x[i][2] - x[i][3]);
 	return .5 * (S[0] + S[1] - d2) / Math.sqrt(S[0] * S[1]);
+}
+
+Math.kernel_smooth = function(a, radius, func)
+{
+	if (a.length == 0) return null;
+	if (func == null) func = function(x) { return x > -1 && x < 1? .75 * (1 - x * x) : 0; }
+	a.sort(function(x,y) { return x[0]-y[0] });
+	var r1 = 1.0 / radius;
+	return function(x) {
+		// binary search
+		var L = 0, R = a.length - 1;
+		while (R - L > 1) {
+			var m = Math.floor((L + R) / 2);
+			if (a[m][0] < x) L = m + 1;
+			else if (a[m][0] > x) R = m - 1;
+			else {
+				L = R = m;
+				break;
+			}
+		}
+		// smooth
+		var b = [];
+		for (var j = 0; j < a[0].length; ++j) b[j] = 0;
+		for (var i = L; i < a.length && a[i][0] - x <= radius; ++i) {
+			var w = func((x - a[i][0]) * r1);
+			b[0] += w;
+			for (var j = 1; j < a[i].length; ++j)
+				b[j] += w * a[i][j];
+		}
+		for (var i = L - 1; i >= 0 && x - a[i][0] <= radius; --i) {
+			var w = func((x - a[i][0]) * r1);
+			b[0] += w;
+			for (var j = 1; j < a[i].length; ++j)
+				b[j] += w * a[i][j];
+		}
+		return b;
+	}
 }
 
 /*************************
@@ -99,16 +140,130 @@ function k8_spearman(args)
 	return 0;
 }
 
+function k8_ksmooth(args)
+{
+	var c, col_g = null, col_x = 0, cols = [], radius = 1, precision = 6;
+	while ((c = getopt(args, "r:g:x:y:p:")) != null) {
+		if (c == 'r') radius = parseFloat(getopt.arg);
+		else if (c == 'g') col_g = parseInt(getopt.arg) - 1;
+		else if (c == 'x') col_x = parseInt(getopt.arg) - 1;
+		else if (c == 'p') precision = parseInt(getopt.arg);
+		else if (c == 'y') {
+			var s = getopt.arg.split(",");
+			for (var i = 0; i < s.length; ++i)
+				cols.push(parseInt(s[i]) - 1);
+		}
+	}
+	if (args.length == getopt.ind) {
+		print("Usage: k8 k8tk.js ksmooth [-r radius] [-g groupCol] [-x xCol] [-y yCol] <in.txt>");
+		return 1;
+	}
+	if (cols.length == 0) cols = [1];
+	cols.unshift(col_x);
+
+	var buf = new Bytes();
+	var file = args[getopt.ind] == '-'? new File() : new File(args[getopt.ind]);
+	var group = {}, list = [];
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t");
+		var key = col_g == null? "*" : t[col_g];
+		if (group[key] == null) group[key] = [];
+		var b = [];
+		for (var i = 0; i < cols.length; ++i)
+			b[i] = parseFloat(t[cols[i]]);
+		list.push([key, b[0]]);
+		group[key].push(b);
+	}
+	file.close();
+	buf.destroy();
+
+	var smooth = {};
+	for (var key in group)
+		smooth[key] = Math.kernel_smooth(group[key], radius);
+	for (var i = 0; i < list.length; ++i) {
+		var b = smooth[list[i][0]](list[i][1]);
+		var out = [];
+		if (col_g != null) out.push(list[i][0]);
+		out.push(list[i][1]);
+		for (var j = 1; j < b.length; ++j)
+			out.push(b[0] > 0? (b[j] / b[0]).toFixed(precision) : "NA");
+		print(out.join("\t"));
+	}
+}
+
+/////////// Bioinformatics ///////////
+
+function k8_markmut(args)
+{
+	if (args.length < 2) {
+		print("Usage: k8 k8tk.js markmut <ref.fa> <mut.tsv>");
+		return 1;
+	}
+
+	var A = "A".charCodeAt(0), C = "C".charCodeAt(0);
+	var G = "G".charCodeAt(0), T = "T".charCodeAt(0);
+
+	var file, buf = new Bytes();
+
+	warn("Reading the reference genome...");
+	var seqs = {}, seq = null;
+	file = new File(args[0]);
+	while (file.readline(buf) >= 0) {
+		if (buf[0] == 62) {
+			var m, line = buf.toString();
+			if ((m = /^>(\S+)/.exec(line)) == null)
+				throw Error("ERROR: wrong FASTA format");
+			seq = seqs[m[1]] = new Bytes();
+		} else seq.set(buf);
+	}
+	file.close();
+
+	warn("Processing the list...");
+	file = new File(args[1]);
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t");
+		var type = [];
+		var x = parseInt(t[1]) - 1;
+		var seq = seqs[t[0]];
+		if (seq != null && x >= 0 && x < seq.length) {
+			var ref = t[2], alt = t[3].split(",");
+			for (var j = 0; j < alt.length; ++j) {
+				if (ref.length > alt[j].length) type.push("del");
+				else if (ref.length < alt[j].length) type.push("ins");
+				else if (ref.length > 1) type.push("mnp");
+				else {
+					var mut = ref < alt[j]? ref + alt[j] : alt[j] + ref;
+					if (mut == "AG" || mut == "CT") {
+						var is_cpg = false;
+						if (mut == "AG" && x > 0 && seq[x-1] == C) is_cpg = true;
+						else if (mut == "CT" && x < seq.length - 1 && seq[x+1] == G) is_cpg = true;
+						type.push(is_cpg? "ts_cpg" : "ts_non_cpg");
+					} else type.push("tv");
+				}
+			}
+		}
+		print(t.join("\t"), type.length? type.join(",") : "NA");
+	}
+	buf.destroy();
+	file.close();
+}
+
 function main(args)
 {
 	if (args.length == 0) {
 		print("Usage: k8 k8tk.js <command> <arguments>");
 		print("Commands:");
-		print("  spearman       Spearman correlation");
+		print("  Numerical:");
+		print("    spearman       Spearman correlation");
+		print("    ksmooth        kernel smoothing");
+		print("  Bioinformatics:");
+		print("    markmut        Mark mutation type (e.g. ts/tv/cpg/etc)");
 		return 1;
 	}
 	var cmd = args.shift();
 	if (cmd == "spearman") return k8_spearman(args);
+	else if (cmd == "ksmooth") return k8_ksmooth(args);
+	else if (cmd == "markmut") return k8_markmut(args);
 	else {
 		throw Error("ERROR: unknown command '" + cmd + "'");
 	}
