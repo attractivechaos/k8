@@ -142,16 +142,23 @@ function k8_spearman(args)
 
 function k8_ksmooth(args)
 {
-	var c, col_g = null, col_x = 0, cols = [], radius = 1, precision = 6;
+	var c, col_g = null, col_x = 0, cols = [], radius = 1, precision = 6, missing = "NA";
 	while ((c = getopt(args, "r:g:x:y:p:")) != null) {
 		if (c == 'r') radius = parseFloat(getopt.arg);
 		else if (c == 'g') col_g = parseInt(getopt.arg) - 1;
 		else if (c == 'x') col_x = parseInt(getopt.arg) - 1;
 		else if (c == 'p') precision = parseInt(getopt.arg);
 		else if (c == 'y') {
-			var s = getopt.arg.split(",");
-			for (var i = 0; i < s.length; ++i)
-				cols.push(parseInt(s[i]) - 1);
+			var m, s = getopt.arg.split(",");
+			for (var i = 0; i < s.length; ++i) {
+				if ((m = /^(\d+)$/.exec(s[i])) != null)
+					cols.push(parseInt(m[1]) - 1);
+				else if ((m = /^(\d+)-(\d+)$/.exec(s[i])) != null) {
+					var st = parseInt(m[1]) - 1, en = parseInt(m[2]);
+					for (var j = st; j < en; ++j)
+						cols.push(j);
+				}
+			}
 		}
 	}
 	if (args.length == getopt.ind) {
@@ -169,9 +176,12 @@ function k8_ksmooth(args)
 		var key = col_g == null? "*" : t[col_g];
 		if (group[key] == null) group[key] = [];
 		var b = [];
-		for (var i = 0; i < cols.length; ++i)
-			b[i] = parseFloat(t[cols[i]]);
+		for (var i = 0; i < cols.length; ++i) {
+			if (t[cols[i]] == missing) break;
+			b.push(parseFloat(t[cols[i]]));
+		}
 		list.push([key, b[0]]);
+		if (b.length < cols.length) continue;
 		group[key].push(b);
 	}
 	file.close();
