@@ -199,6 +199,58 @@ function k8_ksmooth(args)
 			out.push(b[0] > 0? (b[j] / b[0]).toFixed(precision) : "NA");
 		print(out.join("\t"));
 	}
+	return 0;
+}
+
+function k8_binavg(args)
+{
+	var c, col_srt = 0, col_thres = -1, thres = 10, precision = 6;
+	while ((c = getopt(args, "s:t:m:p:")) != null) {
+		if (c == 's') col_srt = parseInt(getopt.arg) - 1;
+		else if (c == 't') col_thres = parseInt(getopt.arg) - 1;
+		else if (c == 'm') thres = parseFloat(getopt.arg);
+		else if (c == 'p') precision = parseInt(getopt.arg);
+	}
+	if (args.length == getopt.ind) {
+		print("Usage: k8 k8tk.js binavg [-s colSrt] [-t colThres] [-m minThres] <in.txt>");
+		return 1;
+	}
+
+	var buf = new Bytes();
+	var file = args[getopt.ind] == '-'? new File() : new File(args[getopt.ind]);
+	var n_col = null, a = [];
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t");
+		if (n_col == null) n_col = t.length;
+		else if (n_col != t.length) throw Error("ERROR: lines with a different number of fields: " + n_col + " != " + t.length);
+		for (var i = 0; i < t.length; ++i)
+			t[i] = parseFloat(t[i]);
+		a.push(t);
+	}
+	file.close();
+	buf.destroy();
+
+	a.sort(function(x, y) { return x[col_srt] - y[col_srt] });
+	var sum = [], n = 0;
+	for (var j = 0; j < n_col; ++j) sum[j] = 0;
+	for (var i = 0; i < a.length; ++i) {
+		for (var j = 0; j < n_col; ++j)
+			sum[j] += a[i][j];
+		++n;
+		if ((col_thres < 0 && n >= Math.floor(thres + .499)) || (col_thres >= 0 && sum[col_thres] >= thres)) {
+			for (var j = 0; j < n_col; ++j)
+				sum[j] = (sum[j] / n).toFixed(precision);
+			print(sum.join("\t"));
+			for (var j = 0; j < n_col; ++j) sum[j] = 0;
+			n = 0;
+		}
+	}
+	if ((col_thres < 0 && n >= Math.floor(thres/2 + .499)) || (col_thres >= 0 && sum[col_thres] >= thres/2)) {
+		for (var j = 0; j < n_col; ++j)
+			sum[j] = (sum[j] / n).toFixed(precision);
+		print(sum.join("\t"));
+	}
+	return 0;
 }
 
 /////////// Bioinformatics ///////////
@@ -266,6 +318,7 @@ function main(args)
 		print("  Numerical:");
 		print("    spearman       Spearman correlation");
 		print("    ksmooth        kernel smoothing");
+		print("    binavg         binned average");
 		print("  Bioinformatics:");
 		print("    markmut        Mark mutation type (e.g. ts/tv/cpg/etc)");
 		return 1;
@@ -273,6 +326,7 @@ function main(args)
 	var cmd = args.shift();
 	if (cmd == "spearman") return k8_spearman(args);
 	else if (cmd == "ksmooth") return k8_ksmooth(args);
+	else if (cmd == "binavg") return k8_binavg(args);
 	else if (cmd == "markmut") return k8_markmut(args);
 	else {
 		throw Error("ERROR: unknown command '" + cmd + "'");
