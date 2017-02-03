@@ -398,6 +398,27 @@ function k8_markmut(args)
 	file.close();
 }
 
+function k8_bedmerge(args)
+{
+	var buf = new Bytes();
+	var file = args.length > 0? new File(args[0]) : new File();
+	var ch = null, st, en;
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t", 3);
+		var s = parseInt(t[1]);
+		var e = parseInt(t[2]);
+		if (ch != t[0] || s > en) { // no overlap
+			if (ch != null) print(ch, st, en);
+			ch = t[0], st = s, en = e;
+		} else if (s < st) throw Error("ERROR: input is not sorted by coordinate");
+		else en = en > e? en : e;
+	}
+	if (ch != null) print(ch, st, en);
+	file.close();
+	buf.destroy();
+	return 0;
+}
+
 function main(args)
 {
 	if (args.length == 0) {
@@ -409,6 +430,7 @@ function main(args)
 		print("    binavg         binned average");
 		print("  Bioinformatics:");
 		print("    markmut        Mark mutation type (e.g. ts/tv/cpg/etc)");
+		print("    bedmerge       Merge overlaps in sorted BED");
 		return 1;
 	}
 	var cmd = args.shift();
@@ -416,6 +438,7 @@ function main(args)
 	else if (cmd == "ksmooth") return k8_ksmooth(args);
 	else if (cmd == "binavg") return k8_binavg(args);
 	else if (cmd == "markmut") return k8_markmut(args);
+	else if (cmd == "bedmerge") return k8_bedmerge(args);
 	else {
 		throw Error("ERROR: unknown command '" + cmd + "'");
 	}
