@@ -42,6 +42,59 @@ var getopt = function(args, ostr) {
 	return optopt;
 }
 
+/////////// Interval manipulation ///////////
+
+Interval = {};
+
+Interval.sort = function(a)
+{
+	if (typeof a[0] == 'number')
+		a.sort(function(x, y) { return x - y });
+	else a.sort(function(x, y) { return x[0] - y[0] });
+}
+
+Interval.merge = function(a, to_srt)
+{
+	if (typeof to_srt == 'undefined') to_srt = true;
+	if (to_srt) Interval.sort(a);
+	var k = 0;
+	for (var i = 1; i < a.length; ++i) {
+		if (a[k][1] >= a[i][0])
+			a[k][1] = a[k][1] > a[i][1]? a[k][1] : a[i][1];
+		else a[++k] = a[i].slice(0);
+	}
+	a.length = k + 1;
+}
+
+Interval.find_intv = function(a, x)
+{
+	var left = -1, right = a.length;
+	if (typeof a[0] == 'number') {
+		while (right - left > 1) {
+			var mid = left + ((right - left) >> 1);
+			if (a[mid] > x) right = mid;
+			else if (a[mid] < x) left = mid;
+			else return mid;
+		}
+	} else {
+		while (right - left > 1) {
+			var mid = left + ((right - left) >> 1);
+			if (a[mid][0] > x) right = mid;
+			else if (a[mid][0] < x) left = mid;
+			else return mid;
+		}
+	}
+	return left;
+}
+
+Interval.trans_coor = function(a, x)
+{
+	var k = Interval.find_intv(a, x);
+	if (k < 0) return a[0][1];
+	if (k == a.length - 1) return a[a.length - 1][1];
+	return a[k][1] + (a[k+1][1] - a[k][1]) * ((x - a[k][0]) / (a[k+1][0] - a[k][0]));
+}
+
 /////////// Numerical ///////////
 
 Math.spearman = function(a)
@@ -70,11 +123,14 @@ Math.spearman = function(a)
 	return .5 * (S[0] + S[1] - d2) / Math.sqrt(S[0] * S[1]);
 }
 
-Math.kernel_smooth = function(a, radius, func)
+Math.kernel_smooth = function(a, radius, bound, func)
 {
 	if (a.length == 0) return null;
-	if (func == null) func = function(x) { return x > -1 && x < 1? .75 * (1 - x * x) : 0; }
+	if (typeof func == "undefined" || func == null)
+		func = function(x) { return x > -1 && x < 1? .75 * (1 - x * x) : 0; } // Epanechnikov
 	a.sort(function(x,y) { return x[0]-y[0] });
+	if (typeof bound != "undefined")
+		bound[0] = a[0][0], bound[1] = a[a.length-1][0];
 	var r1 = 1.0 / radius;
 	return function(x) {
 		// binary search
@@ -142,12 +198,14 @@ function k8_spearman(args)
 
 function k8_ksmooth(args)
 {
-	var c, col_g = null, col_x = 0, cols = [], radius = 1, precision = 6, missing = "NA";
-	while ((c = getopt(args, "r:g:x:y:p:")) != null) {
+	var c, col_g = null, col_x = 0, cols = [], radius = 1, precision = 6, missing = "NA", step = null, use_uniform = false;
+	while ((c = getopt(args, "r:g:x:y:p:s:u")) != null) {
 		if (c == 'r') radius = parseFloat(getopt.arg);
 		else if (c == 'g') col_g = parseInt(getopt.arg) - 1;
 		else if (c == 'x') col_x = parseInt(getopt.arg) - 1;
 		else if (c == 'p') precision = parseInt(getopt.arg);
+		else if (c == 'u') use_uniform = true;
+		else if (c == 's') step = parseInt(getopt.arg);
 		else if (c == 'y') {
 			var m, s = getopt.arg.split(",");
 			for (var i = 0; i < s.length; ++i) {
@@ -162,7 +220,15 @@ function k8_ksmooth(args)
 		}
 	}
 	if (args.length == getopt.ind) {
-		print("Usage: k8 k8tk.js ksmooth [-r radius] [-g groupCol] [-x xCol] [-y yCol] <in.txt>");
+		print("Usage: k8 k8tk.js ksmooth [options] <in.txt>");
+		print("Options:");
+		print("  -r FLOAT    radius [1]");
+		print("  -g INT      group column []");
+		print("  -x INT      x column [1]");
+		print("  -y STR      y column(s) [2]");
+		print("  -u          use uniform kernel [Epanechnikov]");
+		print("  -s INT      step []");
+		print("  -p INT      precision [6]");
 		return 1;
 	}
 	if (cols.length == 0) cols = [1];
@@ -170,11 +236,14 @@ function k8_ksmooth(args)
 
 	var buf = new Bytes();
 	var file = args[getopt.ind] == '-'? new File() : new File(args[getopt.ind]);
-	var group = {}, list = [];
+	var group = {}, list = [], list_key = [];
 	while (file.readline(buf) >= 0) {
 		var t = buf.toString().split("\t");
 		var key = col_g == null? "*" : t[col_g];
-		if (group[key] == null) group[key] = [];
+		if (group[key] == null) {
+			group[key] = [];
+			list_key.push(key);
+		}
 		var b = [];
 		for (var i = 0; i < cols.length; ++i) {
 			if (t[cols[i]] == missing) break;
@@ -187,17 +256,36 @@ function k8_ksmooth(args)
 	file.close();
 	buf.destroy();
 
-	var smooth = {};
-	for (var key in group)
-		smooth[key] = Math.kernel_smooth(group[key], radius);
-	for (var i = 0; i < list.length; ++i) {
-		var b = smooth[list[i][0]](list[i][1]);
-		var out = [];
-		if (col_g != null) out.push(list[i][0]);
-		out.push(list[i][1]);
-		for (var j = 1; j < b.length; ++j)
-			out.push(b[0] > 0? (b[j] / b[0]).toFixed(precision) : "NA");
-		print(out.join("\t"));
+	function kernel_uniform(x) { return x >= -1 && x < 1? 0.5 : 0 }
+
+	var smooth = {}, bound = {};
+	for (var key in group) {
+		bound[key] = [];
+		smooth[key] = Math.kernel_smooth(group[key], radius, bound[key], use_uniform? kernel_uniform : null);
+	}
+	if (step != null) {
+		for (var k = 0; k < list_key.length; ++k) {
+			var key = list_key[k], st = bound[key][0], en = bound[key][1];
+			for (var x = st + (step>>1); x < en - (step>>1); x += step) {
+				var b = smooth[key](x);
+				var out = [];
+				if (col_g != null) out.push(key);
+				out.push(x);
+				for (var j = 1; j < b.length; ++j)
+					out.push(b[0] > 0? (b[j] / b[0]).toFixed(precision) : "NA");
+				print(out.join("\t"));
+			}
+		}
+	} else {
+		for (var i = 0; i < list.length; ++i) {
+			var b = smooth[list[i][0]](list[i][1]);
+			var out = [];
+			if (col_g != null) out.push(list[i][0]);
+			out.push(list[i][1]);
+			for (var j = 1; j < b.length; ++j)
+				out.push(b[0] > 0? (b[j] / b[0]).toFixed(precision) : "NA");
+			print(out.join("\t"));
+		}
 	}
 	return 0;
 }
