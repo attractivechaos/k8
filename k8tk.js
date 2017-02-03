@@ -95,6 +95,23 @@ Interval.trans_coor = function(a, x)
 	return a[k][1] + (a[k+1][1] - a[k][1]) * ((x - a[k][0]) / (a[k+1][0] - a[k][0]));
 }
 
+Interval.overlap = function(a, st, en)
+{
+	if (en <= a[0][0]) return 0;
+	if (st >= a[a.length-1][1]) return 0;
+	var k_st = Interval.find_intv(a, st);
+	var k_en = Interval.find_intv(a, en);
+	if (k_st == k_en) {
+		return st >= a[k_st][1]? 0 : (a[k_en][1] < en? a[k_en][1] : en) - st;
+	} else {
+		var len = k_st < 0 || st >= a[k_st][1]? 0 : a[k_st][1] - st;
+		for (var k = k_st + 1; k < k_en; ++k)
+			len += a[k][1] - a[k][0];
+		len += (a[k_en][1] < en? a[k_en][1] : en) - a[k_en][0];
+		return len;
+	}
+}
+
 /////////// Numerical ///////////
 
 Math.spearman = function(a)
@@ -419,6 +436,69 @@ function k8_bedmerge(args)
 	return 0;
 }
 
+function k8_bedovlp(args)
+{
+	var c, min_len = 1, print_olen = false, skip_char = '#', print_hdr = false;
+	while ((c = getopt(args, "pHS:l:")) != null) {
+		if (c == 'l') min_len = /^(\d+)$/.test(getopt.arg)? parseInt(getopt.arg) : null;
+		else if (c == 'p') print_olen = true;
+		else if (c == 'S') skip_char = getopt.arg;
+		else if (c == 'H') print_hdr = true;
+	}
+	if (args.length - getopt.ind < 2) {
+		print("Usage: k8 k8tk.js bedovlp [options] <loaded.bed> <streamed.bed>");
+		print("Options:");
+		print("  -l INT     min overlap length, or 'c' for contained [1]");
+		print("  -S STR     characters marking header lines [#]");
+		print("  -p         print the overlap length as the last field on each line");
+		print("  -H         print header lines");
+		return 1;
+	}
+
+	var file, buf = new Bytes();
+
+	var bed = {};
+	file = new File(args[getopt.ind]);
+	while (file.readline(buf) >= 0) {
+		var t = buf.toString().split("\t", 3);
+		if (t.length < 2) continue;
+		if (bed[t[0]] == null) bed[t[0]] = [];
+		var st = parseInt(t[1]), en = null;
+		if (t.length >= 3 && /^(\d+)$/.test(t[2]))
+			en = parseInt(t[2]);
+		if (en == null) en = st--;
+		bed[t[0]].push([st, en]);
+	}
+	file.close();
+	for (var key in bed)
+		Interval.merge(bed[key]);
+
+	file = new File(args[getopt.ind+1]);
+	while (file.readline(buf) >= 0) {
+		var line = buf.toString();
+		var len = 0, t = line.split("\t", 3);
+		var is_hdr = skip_char.indexOf(t[0].charAt(0)) < 0? false : true;
+		if (!is_hdr && bed[t[0]] != null) {
+			var st = parseInt(t[1]), en = parseInt(t[2]);
+			len = Interval.overlap(bed[t[0]], st, en);
+		}
+		if (print_olen) {
+			if (is_hdr) print(line);
+			else print(line, len);
+		} else {
+			if (is_hdr && print_hdr) print(line);
+			else if (!is_hdr) {
+				var l = min_len != null && min_len < en - st? min_len : en - st;
+				if (len >= l) print(line);
+			}
+		}
+	}
+	file.close();
+
+	buf.destroy();
+	return 0;
+}
+
 function main(args)
 {
 	if (args.length == 0) {
@@ -426,11 +506,12 @@ function main(args)
 		print("Commands:");
 		print("  Numerical:");
 		print("    spearman       Spearman correlation");
-		print("    ksmooth        kernel smoothing");
-		print("    binavg         binned average");
+		print("    ksmooth        Kernel smoothing");
+		print("    binavg         Binned average");
 		print("  Bioinformatics:");
 		print("    markmut        Mark mutation type (e.g. ts/tv/cpg/etc)");
 		print("    bedmerge       Merge overlaps in sorted BED");
+		print("    bedovlp        Overlap length between two BED files");
 		return 1;
 	}
 	var cmd = args.shift();
@@ -439,6 +520,7 @@ function main(args)
 	else if (cmd == "binavg") return k8_binavg(args);
 	else if (cmd == "markmut") return k8_markmut(args);
 	else if (cmd == "bedmerge") return k8_bedmerge(args);
+	else if (cmd == "bedovlp") return k8_bedovlp(args);
 	else {
 		throw Error("ERROR: unknown command '" + cmd + "'");
 	}
