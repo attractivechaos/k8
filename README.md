@@ -38,7 +38,7 @@ wget -O- https://github.com/attractivechaos/k8/releases/download/v0.2.1/v8-3.16.
 # compile V8
 cd v8-3.16.4 && make -j4 x64.release
 # compile K8
-g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_*.a"|grep -v nosnap`
+g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_base.a"` `find out -name "libv8_snapshot.a"`
 ```
 
 Alternatively, you may download the precompiled binaries for Mac and Linux from
