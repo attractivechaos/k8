@@ -95,21 +95,41 @@ Interval.trans_coor = function(a, x)
 	return a[k][1] + (a[k+1][1] - a[k][1]) * ((x - a[k][0]) / (a[k+1][0] - a[k][0]));
 }
 
-Interval.overlap = function(a, st, en)
+Interval.overlap_len = function(a, st, en)
 {
-	if (en <= a[0][0]) return 0;
-	if (st >= a[a.length-1][1]) return 0;
+	if (en <= a[0][0] || st >= a[a.length-1][1]) return 0;
 	var k_st = Interval.find_intv(a, st);
 	var k_en = Interval.find_intv(a, en);
+	var len = 0;
 	if (k_st == k_en) {
-		return st >= a[k_st][1]? 0 : (a[k_en][1] < en? a[k_en][1] : en) - st;
+		if (st < a[k_st][1])
+			len = (a[k_en][1] < en? a[k_en][1] : en) - st;
 	} else {
-		var len = k_st < 0 || st >= a[k_st][1]? 0 : a[k_st][1] - st;
+		len = k_st < 0 || st >= a[k_st][1]? 0 : a[k_st][1] - st;
 		for (var k = k_st + 1; k < k_en; ++k)
 			len += a[k][1] - a[k][0];
 		len += (a[k_en][1] < en? a[k_en][1] : en) - a[k_en][0];
-		return len;
 	}
+	return len;
+}
+
+Interval.overlap_list = function(a, st, en)
+{
+	if (en <= a[0][0] || st >= a[a.length-1][1]) return [];
+	var k_st = Interval.find_intv(a, st);
+	var k_en = Interval.find_intv(a, en);
+	var o = [];
+	if (k_st == k_en) {
+		if (st < a[k_st][1])
+			o.push([(a[k_en][1] < en? a[k_en][1] : en) - st].concat(a[k_en].slice(2)));
+	} else {
+		if (k_st >= 0 && st < a[k_st][1])
+			o.push([a[k_st][1] - st].concat(a[k_st].slice(2)));
+		for (var k = k_st + 1; k < k_en; ++k)
+			o.push([a[k][1] - a[k][0]].concat(a[k].slice(2)));
+		o.push([(a[k_en][1] < en? a[k_en][1] : en) - a[k_en][0]].concat(a[k_en].slice(2)));
+	}
+	return o;
 }
 
 /////////// Numerical ///////////
@@ -480,7 +500,7 @@ function k8_bedovlp(args)
 		var is_hdr = skip_char.indexOf(t[0].charAt(0)) < 0? false : true;
 		if (!is_hdr && bed[t[0]] != null) {
 			var st = parseInt(t[1]), en = parseInt(t[2]);
-			len = Interval.overlap(bed[t[0]], st, en);
+			len = Interval.overlap_len(bed[t[0]], st, en);
 		}
 		if (print_olen) {
 			if (is_hdr) print(line);
