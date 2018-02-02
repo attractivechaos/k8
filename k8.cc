@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.2.3-r67" // known to work with V8-3.16.14
+#define K8_VERSION "0.2.4-r79" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -140,6 +140,15 @@ v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Co
 		i += read;
 	}
 	fclose(file);
+
+	if (size > 2 && strncmp(chars, "#!", 2) == 0) { // then skip the "#!" line
+		int i;
+		for (i = 0; i < size; ++i)
+			if (chars[i] == '\n') break;
+		size -= i + 1;
+		memmove(chars, &chars[i+1], size);
+	}
+
 	v8::Handle<v8::String> result = v8::String::New(chars, size);
 	delete[] chars;
 	return result;
