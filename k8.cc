@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.2.4-r79" // known to work with V8-3.16.14
+#define K8_VERSION "0.2.5-r80" // known to work with V8-3.16.14
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -454,6 +454,7 @@ static size_t ks_read(file_t &fp, kstream_t *ks, uint8_t *buf, long len, reader_
 template<typename file_t, typename reader_t>
 static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, int *dret, int offset, reader_t reader)
 {
+	int gotany = 0;
 	if (dret) *dret = 0;
 	kv->n = offset >= 0? offset : 0;
 	if (ks->begin >= ks->end && ks->is_eof) return -1;
@@ -463,8 +464,8 @@ static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, in
 			if (!ks->is_eof) {
 				ks->begin = 0;
 				ks->end = reader(fp, ks->buf, ks->buf_size);
-				if (ks->end < ks->buf_size) ks->is_eof = 1;
-				if (ks->end == 0) break;
+				if (ks->end == 0) { ks->is_eof = 1; break; }
+				if (ks->end < 0)  { ks->is_eof = 1; return -3; }
 			} else break;
 		}
 		if (delimiter == KS_SEP_LINE) {
@@ -485,6 +486,7 @@ static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, in
 			kroundup32(kv->m);
 			kv->a = (uint8_t*)realloc(kv->a, kv->m);
 		}
+		gotany = 1;
 		memcpy(kv->a + kv->n, ks->buf + ks->begin, i - ks->begin);
 		kv->n = kv->n + (i - ks->begin);
 		ks->begin = i + 1;
@@ -493,6 +495,7 @@ static int ks_getuntil(file_t &fp, kstream_t *ks, kvec8_t *kv, int delimiter, in
 			break;
 		}
 	}
+	if (!gotany && ks_eof(ks)) return -1;
 	if (kv->a == 0) {
 		kv->m = 1;
 		kv->a = (uint8_t*)calloc(1, 1);
