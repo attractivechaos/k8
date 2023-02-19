@@ -141,6 +141,23 @@ Math.erfc = function(x)
 
 Math.normald = function(x) { return .5 * Math.erfc(-x * 0.707106781186547524400844362104849039); }
 
+Math.rank = function(x)
+{
+	function aux_func(t) {
+		return t == 1? 0 : (t * t - 1) * t / 12
+	}
+	x.sort(function(a,b) { return a-b });
+	var same = 1, y = [];
+	for (var i = 1; i <= x.length; ++i) {
+		if (i < x.length && x[i-1] == x[i]) ++same;
+		else {
+			var rank = (i<<1) - same + 1;
+			for (var j = i - same; j < i; ++j) y[j] = rank;
+			if (same > 1) same = 1;
+		}
+	}
+}
+
 Math.spearman = function(a)
 {
 	function aux_func(t) {
