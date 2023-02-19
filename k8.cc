@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.2.5-r80" // known to work with V8-3.16.14
+#define K8_VERSION "0.3.0-r81"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -31,89 +31,85 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <zlib.h>
-#include <v8.h>
 
-/************************************
- *** Convenient macros from v8cgi ***
- ************************************/
-
-// A V8 object can have multiple internal fields invisible to JS. The following 4 macros read and write these fields
-#define SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
-#define LOAD_PTR(_args, _index, _type) reinterpret_cast<_type>((_args).This()->GetAlignedPointerFromInternalField(_index))
-#define SAVE_VALUE(_args, _index, _val) (_args).This()->SetInternalField(_index, _val)
-#define LOAD_VALUE(_args, _index) (_args).This()->GetInternalField(_index)
-
-#define JS_STR(...) v8::String::New(__VA_ARGS__)
-
-#define JS_THROW(type, reason) v8::ThrowException(v8::Exception::type(JS_STR(reason)))
-#define JS_ERROR(reason) JS_THROW(Error, reason)
-#define JS_METHOD(_func, _args) v8::Handle<v8::Value> _func(const v8::Arguments &(_args))
-
-#define ASSERT_CONSTRUCTOR(_args) if (!(_args).IsConstructCall()) { return JS_ERROR("Invalid call format. Please use the 'new' operator."); }
-
-#define kroundup32(x) (--(x), (x)|=(x)>>1, (x)|=(x)>>2, (x)|=(x)>>4, (x)|=(x)>>8, (x)|=(x)>>16, ++(x))
+#include "include/v8-context.h"
+#include "include/v8-exception.h"
+#include "include/v8-initialization.h"
+#include "include/v8-isolate.h"
+#include "include/v8-local-handle.h"
+#include "include/v8-script.h"
+#include "include/v8-container.h"
+#include "include/v8-template.h"
+#include "include/libplatform/libplatform.h"
 
 /*******************************
  *** Fundamental V8 routines ***
  *******************************/
 
-static inline const char *k8_cstr(const v8::String::AsciiValue &str) // Convert a V8 string to C string
+static inline const char *k8_cstr(const v8::String::Utf8Value &str) // Convert a V8 string to C string
 {
 	return *str? *str : "<N/A>";
 }
 
-static void k8_exception(v8::TryCatch *try_catch) // Exception handling. Adapted from v8/shell.cc
+static void k8_exception(v8::Isolate* isolate, v8::TryCatch* try_catch) // Exception handling. Adapted from v8/shell.cc
 {
-	v8::HandleScope handle_scope;
-	v8::String::AsciiValue exception(try_catch->Exception());
+	v8::HandleScope handle_scope(isolate);
+	v8::String::Utf8Value exception(isolate, try_catch->Exception());
 	const char* exception_string = k8_cstr(exception);
-	v8::Handle<v8::Message> message = try_catch->Message();
+	v8::Local<v8::Message> message = try_catch->Message();
 	if (message.IsEmpty()) {
 		// V8 didn't provide any extra information about this error; just print the exception.
 		fprintf(stderr, "%s\n", exception_string);
 	} else {
 		// Print (filename):(line number): (message).
-		v8::String::AsciiValue filename(message->GetScriptResourceName());
+		v8::String::Utf8Value filename(isolate, message->GetScriptOrigin().ResourceName());
+		v8::Local<v8::Context> context(isolate->GetCurrentContext());
 		const char* filename_string = k8_cstr(filename);
-		int linenum = message->GetLineNumber();
+		int linenum = message->GetLineNumber(context).FromJust();
 		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
 		// Print line of source code.
-		v8::String::AsciiValue sourceline(message->GetSourceLine());
-		const char *sourceline_string = k8_cstr(sourceline);
+		v8::String::Utf8Value sourceline(isolate, message->GetSourceLine(context).ToLocalChecked());
+		const char* sourceline_string = k8_cstr(sourceline);
 		fprintf(stderr, "%s\n", sourceline_string);
 		// Print wavy underline (GetUnderline is deprecated).
-		int start = message->GetStartColumn();
+		int start = message->GetStartColumn(context).FromJust();
 		for (int i = 0; i < start; i++) fputc(' ', stderr);
-		int end = message->GetEndColumn();
+		int end = message->GetEndColumn(context).FromJust();
 		for (int i = start; i < end; i++) fputc('^', stderr);
 		fputc('\n', stderr);
-		v8::String::AsciiValue stack_trace(try_catch->StackTrace());
-		if (stack_trace.length() > 0) { // TODO: is the following redundant?
-			const char* stack_trace_string = k8_cstr(stack_trace);
-			fputs(stack_trace_string, stderr); fputc('\n', stderr);
+		v8::Local<v8::Value> stack_trace_string;
+		if (try_catch->StackTrace(context).ToLocal(&stack_trace_string) &&
+				stack_trace_string->IsString() &&
+				stack_trace_string.As<v8::String>()->Length() > 0)
+		{
+			v8::String::Utf8Value stack_trace(isolate, stack_trace_string);
+			const char* err = k8_cstr(stack_trace);
+			fputs(err, stderr); fputc('\n', stderr);
 		}
 	}
 }
 
-bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool prt_rst) // Execute JS in a string. Adapted from v8/shell.cc
+static bool k8_execute(v8::Isolate* isolate, v8::Local<v8::String> source, v8::Local<v8::Value> name, bool prt_rst) // Execute JS in a string. Adapted from v8/shell.cc
 {
-	v8::HandleScope handle_scope;
-	v8::TryCatch try_catch;
-	if (source == v8::Handle<v8::String>()) return false;
-	v8::Handle<v8::Script> script = v8::Script::Compile(source, name);
-	if (script.IsEmpty()) {
-		k8_exception(&try_catch);
+	v8::HandleScope handle_scope(isolate);
+	v8::TryCatch try_catch(isolate);
+	v8::ScriptOrigin origin(isolate, name);
+	v8::Local<v8::Context> context(isolate->GetCurrentContext());
+	v8::Local<v8::Script> script;
+	if (!v8::Script::Compile(context, source, &origin).ToLocal(&script)) {
+		k8_exception(isolate, &try_catch);
 		return false;
 	} else {
-		v8::Handle<v8::Value> result = script->Run();
-		if (result.IsEmpty()) {
+		v8::Local<v8::Value> result;
+		if (!script->Run(context).ToLocal(&result)) {
 			assert(try_catch.HasCaught());
-			k8_exception(&try_catch);
+			k8_exception(isolate, &try_catch);
 			return false;
 		} else {
 			assert(!try_catch.HasCaught());
 			if (prt_rst && !result->IsUndefined()) {
-				v8::String::AsciiValue str(result);
+				// If all went well and the result wasn't undefined then print the returned value.
+				v8::String::Utf8Value str(isolate, result);
 				puts(k8_cstr(str));
 			}
 			return true;
@@ -121,7 +117,7 @@ bool k8_execute(v8::Handle<v8::String> source, v8::Handle<v8::Value> name, bool 
 	}
 }
 
-v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Copied from v8/shell.cc
+v8::MaybeLocal<v8::String> k8_readfile(v8::Isolate* isolate, const char *name) // Read an entire file. Adapted from v8/shell.cc
 {
 	FILE* file = fopen(name, "rb");
 	if (file == NULL) {
@@ -149,7 +145,8 @@ v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Co
 		memmove(chars, &chars[i+1], size);
 	}
 
-	v8::Handle<v8::String> result = v8::String::New(chars, size);
+	v8::MaybeLocal<v8::String> result = v8::String::NewFromUtf8(
+			isolate, chars, v8::NewStringType::kNormal, static_cast<int>(size));
 	delete[] chars;
 	return result;
 }
@@ -158,62 +155,70 @@ v8::Handle<v8::String> k8_readfile(const char *name) // Read the entire file. Co
  *** New built-in functions ***
  ******************************/
 
-JS_METHOD(k8_print, args) // print(): print to stdout; TAB demilited if multiple arguments are provided
+static void k8_print(const v8::FunctionCallbackInfo<v8::Value> &args) // print(): print to stdout; TAB demilited if multiple arguments are provided
 {
 	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope;
+		v8::HandleScope handle_scope(args.GetIsolate());
 		if (i) putchar('\t');
-		v8::String::AsciiValue str(args[i]);
+		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
 		fputs(k8_cstr(str), stdout);
 	}
 	putchar('\n');
-	return v8::Undefined();
 }
 
-JS_METHOD(k8_warn, args) // print(): print to stdout; TAB demilited if multiple arguments are provided
+static void k8_warn(const v8::FunctionCallbackInfo<v8::Value> &args) // warn(): similar print() but print to stderr
 {
 	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope;
-		if (i) fputc('\t', stderr);
-		v8::String::AsciiValue str(args[i]);
+		v8::HandleScope handle_scope(args.GetIsolate());
+		if (i) putchar('\t');
+		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
 		fputs(k8_cstr(str), stderr);
 	}
 	fputc('\n', stderr);
-	return v8::Undefined();
 }
 
-JS_METHOD(k8_exit, args) // exit()
+static void k8_exit(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
-	int exit_code = args[0]->Int32Value();
+	// If not arguments are given args[0] will yield undefined which converts to the integer value 0.
+	int exit_code = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
 	fflush(stdout); fflush(stderr);
 	exit(exit_code);
-	return v8::Undefined();
 }
 
-JS_METHOD(k8_load, args) // load(): Load and execute a JS file. It also searches ONE path in $K8_LIBRARY_PATH
+static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): Load and execute a JS file. It also searches ONE path in $K8_PATH
 {
 	char buf[1024], *path = getenv("K8_PATH");
 	FILE *fp;
 	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope;
-		v8::String::Utf8Value file(args[i]);
+		v8::HandleScope handle_scope(args.GetIsolate());
+		v8::String::Utf8Value file(args.GetIsolate(), args[i]);
 		buf[0] = 0;
 		if ((fp = fopen(*file, "r")) != 0) {
 			fclose(fp);
+			assert(strlen(*file) < 1023);
 			strcpy(buf, *file);
 		} else if (path) { // TODO: to allow multiple paths separated by ":"
+			assert(strlen(path) + strlen(*file) + 1 < 1023);
 			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
 			if ((fp = fopen(buf, "r")) == 0) buf[0] = 0;
 			else fclose(fp);
 		}
-		if (buf[0] == 0) return JS_THROW(Error, "[load] fail to locate the file");
-		v8::Handle<v8::String> source = k8_readfile(buf);
-		if (!k8_execute(source, v8::String::New(*file), false))
-			return JS_THROW(Error, "[load] fail to execute the file");
+		if (buf[0] == 0) {
+			args.GetIsolate()->ThrowError("[load] fail to locate the file");
+			return;
+		}
+		v8::Local<v8::String> source;
+		if (!k8_readfile(args.GetIsolate(), buf).ToLocal(&source)) {
+			args.GetIsolate()->ThrowError("[load] fail to read the file");
+			return;
+		}
+		if (!k8_execute(args.GetIsolate(), source, args[i], false)) {
+			args.GetIsolate()->ThrowError("[load] fail to execute the file");
+			return;
+		}
 	}
-	return v8::Undefined();
 }
-
+#if 0
 /********************
  *** Bytes object ***
  ********************/
@@ -719,7 +724,7 @@ JS_METHOD(k8_map_destroy, args)
 	SAVE_PTR(args, 0, 0);
 	return v8::Undefined();
 }
-
+#endif
 /***********************
  *** Getopt from BSD ***
  ***********************/
@@ -772,103 +777,94 @@ int getopt(int nargc, char * const *nargv, const char *ostr)
  *** Main function ***
  *********************/
 
-static v8::Persistent<v8::Context> CreateShellContext() // adapted from shell.cc
+static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 {
-	v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
-	global->Set(JS_STR("print"), v8::FunctionTemplate::New(k8_print));
-	global->Set(JS_STR("warn"), v8::FunctionTemplate::New(k8_warn));
-	global->Set(JS_STR("exit"), v8::FunctionTemplate::New(k8_exit));
-	global->Set(JS_STR("load"), v8::FunctionTemplate::New(k8_load));
-	{ // add the 'Bytes' object
-		v8::HandleScope scope;
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_bytes);
-		ft->SetClassName(JS_STR("Bytes"));
+	v8::Local<v8::ObjectTemplate> global = v8::ObjectTemplate::New(isolate);
+	global->Set(isolate, "print", v8::FunctionTemplate::New(isolate, k8_print));
+	global->Set(isolate, "warn", v8::FunctionTemplate::New(isolate, k8_warn));
+	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
+	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
+	return v8::Context::New(isolate, NULL, global);
+}
 
-		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
-		ot->SetInternalFieldCount(1);
-		ot->SetAccessor(JS_STR("length"), k8_bytes_length_getter, k8_bytes_length_setter, v8::Handle<v8::Value>(), v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::DontDelete));
-		ot->SetAccessor(JS_STR("capacity"), k8_bytes_capacity_getter, k8_bytes_capacity_setter, v8::Handle<v8::Value>(), v8::DEFAULT, static_cast<v8::PropertyAttribute>(v8::DontDelete));
+static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::Context> &context, int argc, char* argv[])
+{
+	// parse command-line options
+	int c;
+	while ((c = getopt(argc, argv, "e:E:v")) >= 0) {
+		if (c == 'e' || c == 'E') { // execute a string
+			v8::Local<v8::String> file_name = v8::String::NewFromUtf8Literal(isolate, "unnamed");
+			v8::Local<v8::String> source;
+			if (!v8::String::NewFromUtf8(isolate, optarg).ToLocal(&source))
+				return 1;
+			bool success = k8_execute(isolate, source, file_name, (c == 'E'));
+			while (v8::platform::PumpMessageLoop(platform, isolate)) continue;
+			return success? 0 : 1;
+		} else if (c == 'v') {
+			printf("V8: %s\nK8: %s\n", v8::V8::GetVersion(), K8_VERSION);
+			return 0;
+		} else {
+			fprintf(stderr, "ERROR: unrecognized option\n");
+			return 1;
+		}
+	}
+	if (optind == argc) {
+		fprintf(stderr, "Usage: k8 [options] <script.js> [arguments]\n");
+		fprintf(stderr, "Options:\n");
+		fprintf(stderr, "  -e STR      execute STR\n");
+		fprintf(stderr, "  -E STR      execute STR and print results\n");
+		fprintf(stderr, "  -v          print version number\n");
+		return 0;
+	}
 
-		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
-		pt->Set("cast", v8::FunctionTemplate::New(k8_bytes_cast));
-		pt->Set("set", v8::FunctionTemplate::New(k8_bytes_set));
-		pt->Set("toString", v8::FunctionTemplate::New(k8_bytes_toString));
-		pt->Set("destroy", v8::FunctionTemplate::New(k8_bytes_destroy));
+	// pass command-line arguments though the "arguments" array
+	v8::Local<v8::Array> args = v8::Array::New(isolate, argc - optind - 1);
+	for (int i = optind + 1; i < argc; ++i) {
+		v8::Local<v8::String> arg = v8::String::NewFromUtf8(isolate, argv[i]).ToLocalChecked();
+		v8::Local<v8::Number> index = v8::Number::New(isolate, i - optind - 1);
+		args->Set(context, index, arg).FromJust();
+	}
+    v8::Local<v8::String> name = v8::String::NewFromUtf8Literal(isolate, "arguments", v8::NewStringType::kInternalized);
+	context->Global()->Set(context, name, args).FromJust();
 
-		global->Set("Bytes", ft);	
+	// load and evaluate the source file
+	v8::Local<v8::String> file_name = v8::String::NewFromUtf8(isolate, argv[optind]).ToLocalChecked();
+	v8::Local<v8::String> source;
+	if (!k8_readfile(isolate, argv[optind]).ToLocal(&source)) {
+		fprintf(stderr, "ERROR: failed to read file '%s'\n", argv[optind]);
+		return 1;
 	}
-	{ // add the 'File' object
-		v8::HandleScope scope;
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_file);
-		ft->SetClassName(JS_STR("File"));
-		ft->InstanceTemplate()->SetInternalFieldCount(5); // (fn, mode, fpr, fpw)
-		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
-		pt->Set("read", v8::FunctionTemplate::New(k8_file_read));
-		pt->Set("readline", v8::FunctionTemplate::New(k8_file_readline));
-		pt->Set("write", v8::FunctionTemplate::New(k8_file_write));
-		pt->Set("close", v8::FunctionTemplate::New(k8_file_close));
-		pt->Set("destroy", v8::FunctionTemplate::New(k8_file_close));
-		global->Set("File", ft);	
-	}
-	{ // add the 'Set' object
-		v8::HandleScope scope;
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(k8_map);
-		ft->SetClassName(JS_STR("Map"));
-		ft->InstanceTemplate()->SetInternalFieldCount(1);
-		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
-		pt->Set("put", v8::FunctionTemplate::New(k8_map_put));
-		pt->Set("get", v8::FunctionTemplate::New(k8_map_get));
-		pt->Set("del", v8::FunctionTemplate::New(k8_map_del));
-		pt->Set("destroy", v8::FunctionTemplate::New(k8_map_destroy));
-		global->Set("Map", ft);	
-	}
-	return v8::Context::New(NULL, global);
+	bool success = k8_execute(isolate, source, file_name, false);
+	while (v8::platform::PumpMessageLoop(platform, isolate)) continue;
+	return success? 0 : 1;
 }
 
 int main(int argc, char* argv[])
 {
+	int c, ret = 0;
+	v8::V8::InitializeICUDefaultLocation(argv[0]);
+	v8::V8::InitializeExternalStartupData(argv[0]);
+	std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
+	v8::V8::InitializePlatform(platform.get());
 	v8::V8::SetFlagsFromCommandLine(&argc, argv, true);
-
-	// set --max_old_space_size. We have to do it before CreateShellContext(), I guess.
-	int c;
-	char flag_buf[256], *size = 0;
-	while ((c = getopt(argc, argv, "ve:E:M:")) >= 0)
-		if (c == 'M') size = optarg;
-	strcat(strcpy(flag_buf, "--max_old_space_size="), size? size : "16384");
-	v8::V8::SetFlagsFromString(flag_buf, strlen(flag_buf));
-	opterr = optind = 1;
-
-	int ret = 0;
-	if (argc == 1) {
-		fprintf(stderr, "Usage: k8 [-v] [-e jsSrc] [-E jsSrc] [-M maxRSS] <src.js> [arguments]\n");
-		return 1;
-	}
+	v8::V8::Initialize();
+	v8::Isolate::CreateParams create_params;
+	create_params.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
+	v8::Isolate* isolate = v8::Isolate::New(create_params);
 	{
-		v8::HandleScope scope;
-		v8::Persistent<v8::Context> context = CreateShellContext();
+		v8::Isolate::Scope isolate_scope(isolate);
+		v8::HandleScope handle_scope(isolate);
+		v8::Local<v8::Context> context = k8_create_shell_context(isolate);
 		if (context.IsEmpty()) {
 			fprintf(stderr, "Error creating context\n");
 			return 1;
 		}
-		context->Enter();
-		while ((c = getopt(argc, argv, "ve:E:M:")) >= 0) // parse k8 related command line options
-			if (c == 'e' || c == 'E') {
-				if (!k8_execute(JS_STR(optarg), JS_STR("CLI"), (c == 'E'))) { // note the difference between 'e' and 'E'
-					ret = 1;
-					break;
-				}
-			} else if (c == 'v') printf("V8: %s\nK8: %s\n", v8::V8::GetVersion(), K8_VERSION);
-		if (!ret && optind != argc) {
-			v8::HandleScope scope2;
-			v8::Local<v8::Array> args = v8::Array::New(argc - optind - 1);
-			for (int i = optind + 1; i < argc; ++i)
-				args->Set(v8::Integer::New(i - optind - 1), JS_STR(argv[i]));
-			context->Global()->Set(JS_STR("arguments"), args);
-			if (!k8_execute(k8_readfile(argv[optind]), JS_STR(argv[optind]), false)) ret = 1;
-		}
-		context->Exit();
-		context.Dispose();
+		v8::Context::Scope context_scope(context);
+		ret = k8_main(isolate, platform.get(), context, argc, argv);
 	}
+	isolate->Dispose();
 	v8::V8::Dispose();
+	v8::V8::DisposePlatform();
+	delete create_params.array_buffer_allocator;
 	return ret;
 }
