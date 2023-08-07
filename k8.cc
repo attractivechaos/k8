@@ -270,6 +270,27 @@ typedef struct {
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
 
+static k8_file_t *ks_open(const char *fn, bool write_file)
+{
+	gzFile fp = 0;
+	FILE *fpw = 0;
+	if (fn) {
+		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, "wb") : stdout;
+		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
+	} else {
+		if (write_file) fpw = stdout;
+		else fp = gzdopen(0, "r");
+	}
+	if (fp == 0 && fpw == 0) return 0;
+	k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
+	ks->fp = fp, ks->fpw = fpw;
+	if (fp) {
+		ks->buf_size = 0x40000;
+		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
+	}
+	return ks;
+}
+
 static inline int32_t ks_getc(k8_file_t *ks)
 {
 	if (ks_err(ks)) return -3;
@@ -394,23 +415,15 @@ static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
-	gzFile fp = 0;
-	FILE *fpw = 0;
 	bool write_file = args.Length() >= 2? args[1]->BooleanValue(isolate) : false;
+	k8_file_t *ks = 0;
 	if (args.Length() > 0) {
 		v8::String::Utf8Value str(isolate, args[0]);
 		const char *fn = k8_cstr(str);
-		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, "w") : stdin;
-		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
-	} else fp = gzdopen(0, "r");
-	if (fp || fpw) {
-		k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
-		ks->fp = fp, ks->fpw = fpw;
-		if (fp) {
-			ks->buf_size = 0x40000;
-			ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
-			ks->enc = args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 1;
-		}
+		ks = ks_open(fn, write_file);
+	} else ks = ks_open(0, false);
+	if (ks) {
+		ks->enc = args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 1;
 		args.GetReturnValue().Set(v8::External::New(isolate, ks));
 	} else {
 		isolate->ThrowError("k8_open: failed to open file");
@@ -666,6 +679,44 @@ static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::Pro
 	info.GetReturnValue().Set(v8::ArrayBuffer::New(isolate, v8::ArrayBuffer::NewBackingStore((uint8_t*)a->buf.s, a->buf.l, k8_ext_delete_cb, 0)));
 }
 
+/******************
+ * The File class *
+ ******************/
+
+static void k8_file_new(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	bool write_file = false;
+	if (args.Length() >= 2) {
+		v8::String::Utf8Value str(isolate, args[0]);
+		const char *mode = *str;
+		write_file = strchr(mode, 'w')? true : false;
+	}
+	k8_file_t *ks = 0;
+	if (args.Length() > 0) {
+		v8::String::Utf8Value str(isolate, args[0]);
+		const char *fn = k8_cstr(str);
+		ks = ks_open(fn, write_file);
+	} else ks = ks_open(0, false);
+	if (ks == 0) {
+		isolate->ThrowError("k8_open: failed to open file");
+		args.GetReturnValue().SetNull();
+	} else {
+		K8_SAVE_PTR(args, 0, ks);
+	}
+}
+
+static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (ks->fp) gzclose(ks->fp);
+	if (ks->fpw) fclose(ks->fpw);
+	free(ks);
+	args.GetReturnValue().Set(0);
+}
+
 /***********************
  *** Getopt from BSD ***
  ***********************/
@@ -750,6 +801,19 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 		pt->Set(isolate, "toString", v8::FunctionTemplate::New(isolate, k8_bytes_toString));
 
 		global->Set(isolate, "Bytes", ft);
+	}
+	{ // add the 'File' object
+		v8::HandleScope scope(isolate);
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_file_new);
+		ft->SetClassName(v8::String::NewFromUtf8Literal(isolate, "File"));
+
+		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
+		ot->SetInternalFieldCount(1);
+
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set(isolate, "close", v8::FunctionTemplate::New(isolate, k8_file_close));
+
+		global->Set(isolate, "File", ft);
 	}
 	return v8::Context::New(isolate, NULL, global);
 }
