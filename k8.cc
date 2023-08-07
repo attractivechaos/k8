@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r93-dirty"
+#define K8_VERSION "0.3.0-r94-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -235,8 +235,9 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
  * File reading *
  ****************/
 
-#define KS_SEP_LINE  (-1)
-#define KS_SEP_SPACE (-2)
+#define KS_SEP_SPACE 0
+#define KS_SEP_TAB   1
+#define KS_SEP_LINE  2
 
 #define K8_CALLOC(type, cnt) ((type*)calloc((cnt), sizeof(type)))
 #define K8_REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
@@ -314,7 +315,7 @@ static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *d
 	if (dret) *dret = 0;
 	str->l = appen? str->l : 0;
 	for (;;) {
-		int i;
+		int i = 0;
 		if (ks_err(ks)) return -3;
 		if (ks->st >= ks->en) {
 			if (!ks->is_eof) {
@@ -330,10 +331,13 @@ static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *d
 		} else if (delimiter == KS_SEP_SPACE) {
 			for (i = ks->st; i < ks->en; ++i)
 				if (ks->buf[i] == ' ' || ks->buf[i] == '\t' || ks->buf[i] == '\n') break;
+		} else if (delimiter == KS_SEP_TAB) {
+			for (i = ks->st; i < ks->en; ++i)
+				if (ks->buf[i] == '\t' || ks->buf[i] == '\n') break;
 		} else if (delimiter > 0) {
 			for (i = ks->st; i < ks->en; ++i)
 				if (ks->buf[i] == delimiter) break;
-		} else i = 0; /* never come to here! */
+		} else abort();
 		K8_GROW(uint8_t, str->s, str->l + (i - ks->st), str->m);
 		gotany = 1;
 		memcpy(str->s + str->l, ks->buf + ks->st, i - ks->st);
@@ -364,8 +368,8 @@ static int64_t ks_readfastx(k8_file_t *ks)
 		ks->last_char = c;
 	} /* else: the first header char has been read in the previous call */
 	ks->comment.l = ks->seq.l = ks->qual.l = 0; /* reset all members */
-	if ((r=ks_getuntil2(ks, -2, &ks->name, &c, 0)) < 0) return r;  /* normal exit: EOF or error */
-	if (c != '\n') ks_getuntil2(ks, -1, &ks->comment, 0, 0); /* read FASTA/Q comment */
+	if ((r=ks_getuntil2(ks, KS_SEP_SPACE, &ks->name, &c, 0)) < 0) return r;  /* normal exit: EOF or error */
+	if (c != '\n') ks_getuntil2(ks, KS_SEP_LINE, &ks->comment, 0, 0); /* read FASTA/Q comment */
 	if (ks->seq.s == 0) { /* we can do this in the loop below, but that is slower */
 		ks->seq.m = 256;
 		ks->seq.s = (uint8_t*)malloc(ks->seq.m);
@@ -373,7 +377,7 @@ static int64_t ks_readfastx(k8_file_t *ks)
 	while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '+' && c != '@') {
 		if (c == '\n') continue; /* skip empty lines */
 		ks->seq.s[ks->seq.l++] = c; /* this is safe: we always have enough space for 1 char */
-		ks_getuntil2(ks, -1, &ks->seq, 0, 1); /* read the rest of the line */
+		ks_getuntil2(ks, KS_SEP_LINE, &ks->seq, 0, 1); /* read the rest of the line */
 	}
 	if (c == '>' || c == '@') ks->last_char = c; /* the first header char has been read */
 	K8_GROW(uint8_t, ks->seq.s, ks->seq.l, ks->seq.m); // ks->seq.s[ks->seq.l] below may be out of boundary
@@ -386,7 +390,7 @@ static int64_t ks_readfastx(k8_file_t *ks)
 	}
 	while ((c = ks_getc(ks)) >= 0 && c != '\n'); /* skip the rest of '+' line */
 	if (c == -1) return -2; /* error: no quality string */
-	while ((c = ks_getuntil2(ks, -1, &ks->qual, 0, 1) >= 0 && ks->qual.l < ks->seq.l));
+	while ((c = ks_getuntil2(ks, KS_SEP_LINE, &ks->qual, 0, 1) >= 0 && ks->qual.l < ks->seq.l));
 	if (c == -3) return -3; /* stream error */
 	ks->last_char = 0;	/* we have not come to the next header line */
 	if (ks->seq.l != ks->qual.l) return -2; /* error: qual string is of a different length */
@@ -550,7 +554,7 @@ static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
 			args.GetReturnValue().SetNull();
 		} else {
-			int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : -1;
+			int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(KS_SEP_LINE) : KS_SEP_LINE;
 			int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 0);
 			if (ret >= 0) k8_set_ret(args, ks);
 			else args.GetReturnValue().SetNull();
@@ -734,7 +738,7 @@ static void k8_file_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 		args.GetReturnValue().Set(-2);
 	} else {
 		int32_t dret;
-		int64_t ret = ks_getuntil2(ks, -1, &a->buf, &dret, 0);
+		int64_t ret = ks_getuntil2(ks, KS_SEP_LINE, &a->buf, &dret, 0);
 		if (ret >= 0) args.GetReturnValue().Set(dret);
 		else args.GetReturnValue().Set((int32_t)ret);
 	}
