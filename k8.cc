@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define L8_VERSION "0.1.0-r4-dirty"
+#define K8_VERSION "0.1.0-r4-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -220,9 +220,9 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 	}
 }
 
-static void l8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
-	args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), L8_VERSION).ToLocalChecked());
+	args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), K8_VERSION).ToLocalChecked());
 }
 
 /****************
@@ -378,7 +378,7 @@ static int64_t ks_readfastx(k8_file_t *ks)
  * K8 file reading functions *
  *****************************/
 
-static void l8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	gzFile fp;
@@ -402,7 +402,7 @@ static void l8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void l8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) return;
@@ -413,7 +413,7 @@ static void l8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	free(ks);
 }
 
-static void l8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
@@ -447,7 +447,7 @@ static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_
 	}
 }
 
-static void l8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() < 2 || !args[0]->IsExternal()) {
@@ -464,7 +464,7 @@ static void l8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void l8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
@@ -478,7 +478,7 @@ static void l8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void l8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void k8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
@@ -558,13 +558,13 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "warn", v8::FunctionTemplate::New(isolate, k8_warn));
 	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
 	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
-	global->Set(isolate, "l8_version", v8::FunctionTemplate::New(isolate, l8_version));
-	global->Set(isolate, "l8_open", v8::FunctionTemplate::New(isolate, l8_open));
-	global->Set(isolate, "l8_close", v8::FunctionTemplate::New(isolate, l8_close));
-	global->Set(isolate, "l8_getc", v8::FunctionTemplate::New(isolate, l8_getc));
-	global->Set(isolate, "l8_read", v8::FunctionTemplate::New(isolate, l8_read));
-	global->Set(isolate, "l8_readline", v8::FunctionTemplate::New(isolate, l8_readline));
-	global->Set(isolate, "l8_readfastx", v8::FunctionTemplate::New(isolate, l8_readfastx));
+	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
+	global->Set(isolate, "k8_open", v8::FunctionTemplate::New(isolate, k8_open));
+	global->Set(isolate, "k8_close", v8::FunctionTemplate::New(isolate, k8_close));
+	global->Set(isolate, "k8_getc", v8::FunctionTemplate::New(isolate, k8_getc));
+	global->Set(isolate, "k8_read", v8::FunctionTemplate::New(isolate, k8_read));
+	global->Set(isolate, "k8_readline", v8::FunctionTemplate::New(isolate, k8_readline));
+	global->Set(isolate, "k8_readfastx", v8::FunctionTemplate::New(isolate, k8_readfastx));
 	return v8::Context::New(isolate, NULL, global);
 }
 
@@ -582,7 +582,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 			while (v8::platform::PumpMessageLoop(platform, isolate)) continue;
 			return success? 0 : 1;
 		} else if (c == 'v') {
-			printf("V8: %s\nL8: %s\n", v8::V8::GetVersion(), L8_VERSION);
+			printf("V8: %s\nK8: %s\n", v8::V8::GetVersion(), K8_VERSION);
 			return 0;
 		} else {
 			fprintf(stderr, "ERROR: unrecognized option\n");
@@ -590,7 +590,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 		}
 	}
 	if (optind == argc) {
-		fprintf(stderr, "Usage: l8 [options] <script.js> [arguments]\n");
+		fprintf(stderr, "Usage: k8 [options] <script.js> [arguments]\n");
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -e STR      execute STR\n");
 		fprintf(stderr, "  -E STR      execute STR and print results\n");
