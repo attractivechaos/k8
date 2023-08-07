@@ -220,22 +220,113 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 	}
 }
 
-/**********
- * GZFile *
- **********/
+/****************
+ * File reading *
+ ****************/
 
 #define K8_CALLOC(type, cnt) ((type*)calloc((cnt), sizeof(type)))
+#define K8_REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
+#define K8_GROW(type, ptr, __i, __m) do { \
+		if ((__i) >= (__m)) { \
+			(__m) = (__i) + 1; \
+			(__m) += ((__m)>>1) + 16; \
+			(ptr) = K8_REALLOC(type, ptr, (__m)); \
+		} \
+	} while (0)
 
 typedef struct {
 	gzFile fp;
-	int32_t st, en, is_eof, buf_len;
-	size_t ext_len, ext_cap;
+	int32_t st, en, is_eof, buf_size, dret;
+	int64_t ext_len, ext_cap;
 	uint8_t *ext;
 	uint8_t *buf;
 } k8_gzfile_t;
 
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
+
+static inline int32_t ks_getc(k8_gzfile_t *ks)
+{
+	if (ks_err(ks)) return -3;
+	if (ks_eof(ks)) return -1;
+	if (ks->st >= ks->en) {
+		ks->st = 0;
+		ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
+		if (ks->en == 0) { ks->is_eof = 1; return -1; }
+		else if (ks->en < 0) { ks->is_eof = 1; return -3; }
+	}
+	return (int32_t)ks->buf[ks->st++];
+}
+
+static int64_t ks_read(k8_gzfile_t *ks, uint8_t *buf, int64_t len)
+{
+	int64_t off = 0;
+	if (ks->is_eof && ks->st >= ks->en) return -1;
+	while (len > ks->en - ks->st) {
+		int l = ks->en - ks->st;
+		memcpy(buf + off, ks->buf + ks->st, l);
+		len -= l; off += l;
+		ks->st = 0;
+		ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
+		if (ks->en < ks->buf_size) ks->is_eof = 1;
+		if (ks->en == 0) return off;
+	}
+	memcpy(buf + off, ks->buf + ks->st, len);
+	ks->st += len;
+	return off + len;
+}
+
+static int64_t ks_getuntil2(k8_gzfile_t *ks, int delimiter, int append)
+{
+	int gotany = 0;
+	ks->dret = 0;
+	if (!append) ks->ext_len = 0;
+	int64_t ori_len = ks->ext_len;
+	for (;;) {
+		int i;
+		if (ks_err(ks)) return -3;
+		if (ks->st >= ks->en) {
+			if (!ks->is_eof) {
+				ks->st = 0;
+				ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
+				if (ks->en == 0) { ks->is_eof = 1; break; }
+				if (ks->en == -1) { ks->is_eof = 1; return -3; }
+			} else break;
+		}
+		if (delimiter == -1) {
+			unsigned char *sep = (unsigned char*)memchr(ks->buf + ks->st, '\n', ks->en - ks->st);
+			i = sep != NULL ? sep - ks->buf : ks->en;
+		} else if (delimiter == -2) {
+			for (i = ks->st; i < ks->en; ++i)
+				if (ks->buf[i] == ' ' || ks->buf[i] == '\t' || ks->buf[i] == '\n') break;
+		} else if (delimiter > 0) {
+			for (i = ks->st; i < ks->en; ++i)
+				if (ks->buf[i] == delimiter) break;
+		} else i = 0; /* never come to here! */
+		K8_GROW(uint8_t, ks->ext, ks->ext_len + (i - ks->st), ks->ext_cap);
+		gotany = 1;
+		memcpy(&ks->ext[ks->ext_len], &ks->buf[ks->st], i - ks->st);
+		ks->ext_len += i - ks->st;
+		ks->st = i + 1;
+		if (i < ks->en) {
+			ks->dret = ks->buf[i];
+			break;
+		}
+	}
+	if (!gotany && ks_eof(ks)) return -1;
+	if (ks->ext == 0) {
+		ks->ext_cap = 8;
+		ks->ext = K8_CALLOC(uint8_t, ks->ext_cap);
+	} else if (delimiter == -1 && ks->ext_len > 1 && ks->ext[ks->ext_len - 1] == '\r') {
+		ks->ext_len--;
+	}
+	ks->ext[ks->ext_len] = '\0';
+	return ks->ext_len - ori_len;
+}
+
+/*****************************
+ * K8 file reading functions *
+ *****************************/
 
 static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
@@ -251,8 +342,8 @@ static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (fp) {
 		k8_gzfile_t *ks = K8_CALLOC(k8_gzfile_t, 1);
 		ks->fp = fp;
-		ks->buf_len = 0x40000;
-		ks->buf = K8_CALLOC(uint8_t, ks->buf_len);
+		ks->buf_size = 0x40000;
+		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
 		args.GetReturnValue().Set(v8::External::New(args.GetIsolate(), ks));
 	} else {
 		args.GetReturnValue().SetNull();
@@ -270,19 +361,6 @@ static void k8_gzclose(const v8::FunctionCallbackInfo<v8::Value> &args)
 	free(ks);
 }
 
-static inline int32_t ks_getc(k8_gzfile_t *ks)
-{
-	if (ks_err(ks)) return -3;
-	if (ks_eof(ks)) return -1;
-	if (ks->st >= ks->en) {
-		ks->st = 0;
-		ks->en = gzread(ks->fp, ks->buf, ks->buf_len);
-		if (ks->en == 0) { ks->is_eof = 1; return -1; }
-		else if (ks->en < 0) { ks->is_eof = 1; return -3; }
-	}
-	return (int32_t)ks->buf[ks->st++];
-}
-
 static void k8_gzgetc(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
@@ -295,12 +373,54 @@ static void k8_gzgetc(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
+static void k8_ext_delete_cb(void *data, size_t len, void *aux) // do nothing
+{
+}
+
+static void k8_gzread(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	if (args.Length() < 2 || !args[0]->IsExternal()) {
+		args.GetReturnValue().Set(-1);
+	} else {
+		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+		int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+		if (sz > ks->ext_cap) {
+			ks->ext_cap = sz + (sz>>1) + 16;
+			ks->ext = K8_REALLOC(uint8_t, ks->ext, ks->ext_cap);
+		}
+		ks->ext_len = ks_read(ks, ks->ext, sz);
+		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore(ks->ext, ks->ext_len, k8_ext_delete_cb, 0)));
+	}
+}
+
+static void k8_gzreaduntil(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	if (args.Length() < 1 || !args[0]->IsExternal()) {
+		args.GetReturnValue().SetNull();
+	} else {
+		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+		int32_t sep = args.Length() < 2? -1 : args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+		int64_t ret = ks_getuntil2(ks, sep, 0);
+		if (ret >= 0) {
+			v8::Local<v8::String> src;
+			if (!v8::String::NewFromOneByte(args.GetIsolate(), ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&src))
+				args.GetReturnValue().SetNull();
+			else
+				args.GetReturnValue().Set(src);
+		} else {
+			args.GetReturnValue().SetNull();
+		}
+	}
+}
+
 /***********************
  *** Getopt from BSD ***
  ***********************/
 
 // Modified from getopt.c from BSD, 3-clause BSD license. Copyright (c) 1987-2002 The Regents of the University of California.
-// We do not use system getopt() because it may parse "-v" in "k8 prog.js -v".
+// We do not use the system getopt() because it may parse "-v" in "k8 prog.js -v".
 
 int opterr = 1, optind = 1, optopt, optreset;
 char *optarg;
@@ -357,6 +477,8 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "gzopen", v8::FunctionTemplate::New(isolate, k8_gzopen));
 	global->Set(isolate, "gzclose", v8::FunctionTemplate::New(isolate, k8_gzclose));
 	global->Set(isolate, "gzgetc", v8::FunctionTemplate::New(isolate, k8_gzgetc));
+	global->Set(isolate, "gzread", v8::FunctionTemplate::New(isolate, k8_gzread));
+	global->Set(isolate, "gzreaduntil", v8::FunctionTemplate::New(isolate, k8_gzreaduntil));
 	return v8::Context::New(isolate, NULL, global);
 }
 
