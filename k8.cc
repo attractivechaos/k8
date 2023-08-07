@@ -236,7 +236,7 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 
 typedef struct {
 	gzFile fp;
-	int32_t st, en, is_eof, buf_size, dret;
+	int32_t st, en, is_eof, buf_size, dret, enc;
 	int64_t ext_len, ext_cap;
 	uint8_t *ext;
 	uint8_t *buf;
@@ -344,8 +344,10 @@ static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
 		ks->fp = fp;
 		ks->buf_size = 0x40000;
 		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
+		ks->enc = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : 1;
 		args.GetReturnValue().Set(v8::External::New(args.GetIsolate(), ks));
 	} else {
+		args.GetIsolate()->ThrowError("gzopen: failed to open file");
 		args.GetReturnValue().SetNull();
 	}
 }
@@ -377,11 +379,29 @@ static void k8_ext_delete_cb(void *data, size_t len, void *aux) // do nothing
 {
 }
 
+static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_gzfile_t *ks)
+{
+	if (ks->enc == 0) {
+		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore(ks->ext, ks->ext_len, k8_ext_delete_cb, 0)));
+	} else {
+		v8::Local<v8::String> str;
+		if (ks->enc == 1) {
+			if (!v8::String::NewFromOneByte(args.GetIsolate(), ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&str))
+				args.GetReturnValue().SetNull();
+			else args.GetReturnValue().Set(str);
+		} else {
+			if (!v8::String::NewFromUtf8(args.GetIsolate(), (char*)ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&str))
+				args.GetReturnValue().SetNull();
+			else args.GetReturnValue().Set(str);
+		}
+	}
+}
+
 static void k8_gzread(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() < 2 || !args[0]->IsExternal()) {
-		args.GetReturnValue().Set(-1);
+		args.GetReturnValue().SetNull();
 	} else {
 		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
 		int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
@@ -390,28 +410,21 @@ static void k8_gzread(const v8::FunctionCallbackInfo<v8::Value> &args)
 			ks->ext = K8_REALLOC(uint8_t, ks->ext, ks->ext_cap);
 		}
 		ks->ext_len = ks_read(ks, ks->ext, sz);
-		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore(ks->ext, ks->ext_len, k8_ext_delete_cb, 0)));
+		k8_set_ret(args, ks);
 	}
 }
 
 static void k8_gzreaduntil(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() < 1 || !args[0]->IsExternal()) {
+	if (args.Length() == 0 || !args[0]->IsExternal()) {
 		args.GetReturnValue().SetNull();
 	} else {
 		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
-		int32_t sep = args.Length() < 2? -1 : args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+		int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : -1;
 		int64_t ret = ks_getuntil2(ks, sep, 0);
-		if (ret >= 0) {
-			v8::Local<v8::String> src;
-			if (!v8::String::NewFromOneByte(args.GetIsolate(), ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&src))
-				args.GetReturnValue().SetNull();
-			else
-				args.GetReturnValue().Set(src);
-		} else {
-			args.GetReturnValue().SetNull();
-		}
+		if (ret >= 0) k8_set_ret(args, ks);
+		else args.GetReturnValue().SetNull();
 	}
 }
 
