@@ -1,6 +1,6 @@
 /* The MIT License
 
-   Copyright (c) 2012-2013, 2016 by Attractive Chaos <attractor@live.co.uk>
+   Copyright (c) 2023 by Heng Li <lh3@me.com>
 
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r81"
+#define L8_VERSION "0.1.0-r4-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -220,9 +220,17 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 	}
 }
 
+static void l8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), L8_VERSION).ToLocalChecked());
+}
+
 /****************
  * File reading *
  ****************/
+
+#define KS_SEP_LINE  (-1)
+#define KS_SEP_SPACE (-2)
 
 #define K8_CALLOC(type, cnt) ((type*)calloc((cnt), sizeof(type)))
 #define K8_REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
@@ -235,17 +243,22 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 	} while (0)
 
 typedef struct {
+	int64_t l, m;
+	char *s;
+} kstring_t;
+
+typedef struct {
 	gzFile fp;
-	int32_t st, en, is_eof, buf_size, dret, enc;
-	int64_t ext_len, ext_cap;
-	uint8_t *ext;
+	int32_t st, en, buf_size, enc, last_char;
+	int32_t is_eof:16, is_fastq:16;
 	uint8_t *buf;
-} k8_gzfile_t;
+	kstring_t str, name, seq, qual, comment;
+} k8_file_t;
 
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
 
-static inline int32_t ks_getc(k8_gzfile_t *ks)
+static inline int32_t ks_getc(k8_file_t *ks)
 {
 	if (ks_err(ks)) return -3;
 	if (ks_eof(ks)) return -1;
@@ -258,7 +271,7 @@ static inline int32_t ks_getc(k8_gzfile_t *ks)
 	return (int32_t)ks->buf[ks->st++];
 }
 
-static int64_t ks_read(k8_gzfile_t *ks, uint8_t *buf, int64_t len)
+static int64_t ks_read(k8_file_t *ks, uint8_t *buf, int64_t len)
 {
 	int64_t off = 0;
 	if (ks->is_eof && ks->st >= ks->en) return -1;
@@ -276,12 +289,11 @@ static int64_t ks_read(k8_gzfile_t *ks, uint8_t *buf, int64_t len)
 	return off + len;
 }
 
-static int64_t ks_getuntil2(k8_gzfile_t *ks, int delimiter, int append)
+static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *dret, int appen)
 {
 	int gotany = 0;
-	ks->dret = 0;
-	if (!append) ks->ext_len = 0;
-	int64_t ori_len = ks->ext_len;
+	if (dret) *dret = 0;
+	str->l = appen? str->l : 0;
 	for (;;) {
 		int i;
 		if (ks_err(ks)) return -3;
@@ -293,42 +305,80 @@ static int64_t ks_getuntil2(k8_gzfile_t *ks, int delimiter, int append)
 				if (ks->en == -1) { ks->is_eof = 1; return -3; }
 			} else break;
 		}
-		if (delimiter == -1) {
+		if (delimiter == KS_SEP_LINE) {
 			unsigned char *sep = (unsigned char*)memchr(ks->buf + ks->st, '\n', ks->en - ks->st);
 			i = sep != NULL ? sep - ks->buf : ks->en;
-		} else if (delimiter == -2) {
+		} else if (delimiter == KS_SEP_SPACE) {
 			for (i = ks->st; i < ks->en; ++i)
 				if (ks->buf[i] == ' ' || ks->buf[i] == '\t' || ks->buf[i] == '\n') break;
 		} else if (delimiter > 0) {
 			for (i = ks->st; i < ks->en; ++i)
 				if (ks->buf[i] == delimiter) break;
 		} else i = 0; /* never come to here! */
-		K8_GROW(uint8_t, ks->ext, ks->ext_len + (i - ks->st), ks->ext_cap);
+		K8_GROW(char, str->s, str->l + (i - ks->st), str->m);
 		gotany = 1;
-		memcpy(&ks->ext[ks->ext_len], &ks->buf[ks->st], i - ks->st);
-		ks->ext_len += i - ks->st;
+		memcpy(str->s + str->l, ks->buf + ks->st, i - ks->st);
+		str->l = str->l + (i - ks->st);
 		ks->st = i + 1;
 		if (i < ks->en) {
-			ks->dret = ks->buf[i];
+			if (dret) *dret = ks->buf[i];
 			break;
 		}
 	}
 	if (!gotany && ks_eof(ks)) return -1;
-	if (ks->ext == 0) {
-		ks->ext_cap = 8;
-		ks->ext = K8_CALLOC(uint8_t, ks->ext_cap);
-	} else if (delimiter == -1 && ks->ext_len > 1 && ks->ext[ks->ext_len - 1] == '\r') {
-		ks->ext_len--;
+	if (str->s == 0) {
+		str->m = 1;
+		str->s = K8_CALLOC(char, 1);
+	} else if (delimiter == KS_SEP_LINE && str->l > 1 && str->s[str->l-1] == '\r') {
+		--str->l;
 	}
-	ks->ext[ks->ext_len] = '\0';
-	return ks->ext_len - ori_len;
+	str->s[str->l] = '\0';
+	return str->l;
+}
+
+static int64_t ks_readfastx(k8_file_t *ks)
+{
+	int c, r;
+	if (ks->last_char == 0) { /* then jump to the next header line */
+		while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '@');
+		if (c < 0) return c; /* end of file or error*/
+		ks->last_char = c;
+	} /* else: the first header char has been read in the previous call */
+	ks->comment.l = ks->seq.l = ks->qual.l = 0; /* reset all members */
+	if ((r=ks_getuntil2(ks, -2, &ks->name, &c, 0)) < 0) return r;  /* normal exit: EOF or error */
+	if (c != '\n') ks_getuntil2(ks, -1, &ks->comment, 0, 0); /* read FASTA/Q comment */
+	if (ks->seq.s == 0) { /* we can do this in the loop below, but that is slower */
+		ks->seq.m = 256;
+		ks->seq.s = (char*)malloc(ks->seq.m);
+	}
+	while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '+' && c != '@') {
+		if (c == '\n') continue; /* skip empty lines */
+		ks->seq.s[ks->seq.l++] = c; /* this is safe: we always have enough space for 1 char */
+		ks_getuntil2(ks, -1, &ks->seq, 0, 1); /* read the rest of the line */
+	}
+	if (c == '>' || c == '@') ks->last_char = c; /* the first header char has been read */
+	K8_GROW(char, ks->seq.s, ks->seq.l, ks->seq.m); // ks->seq.s[ks->seq.l] below may be out of boundary
+	ks->seq.s[ks->seq.l] = 0;	/* null terminated string */
+	ks->is_fastq = (c == '+');
+	if (!ks->is_fastq) return ks->seq.l; /* FASTA */
+	if (ks->qual.m < ks->seq.m) {	/* allocate memory for qual in case insufficient */
+		ks->qual.m = ks->seq.m;
+		ks->qual.s = (char*)realloc(ks->qual.s, ks->qual.m);
+	}
+	while ((c = ks_getc(ks)) >= 0 && c != '\n'); /* skip the rest of '+' line */
+	if (c == -1) return -2; /* error: no quality string */
+	while ((c = ks_getuntil2(ks, -1, &ks->qual, 0, 1) >= 0 && ks->qual.l < ks->seq.l));
+	if (c == -3) return -3; /* stream error */
+	ks->last_char = 0;	/* we have not come to the next header line */
+	if (ks->seq.l != ks->qual.l) return -2; /* error: qual string is of a different length */
+	return ks->seq.l;
 }
 
 /*****************************
  * K8 file reading functions *
  *****************************/
 
-static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void l8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	gzFile fp;
@@ -340,7 +390,7 @@ static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
 		fp = gzdopen(0, "r");
 	}
 	if (fp) {
-		k8_gzfile_t *ks = K8_CALLOC(k8_gzfile_t, 1);
+		k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
 		ks->fp = fp;
 		ks->buf_size = 0x40000;
 		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
@@ -352,24 +402,24 @@ static void k8_gzopen(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void k8_gzclose(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void l8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) return;
-	k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
 	gzclose(ks->fp);
 	free(ks->buf);
-	free(ks->ext);
+	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
 	free(ks);
 }
 
-static void k8_gzgetc(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void l8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
 		args.GetReturnValue().Set(-1);
 	} else {
-		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
 		int32_t c = ks_getc(ks);
 		args.GetReturnValue().Set(c);
 	}
@@ -379,52 +429,73 @@ static void k8_ext_delete_cb(void *data, size_t len, void *aux) // do nothing
 {
 }
 
-static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_gzfile_t *ks)
+static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks)
 {
 	if (ks->enc == 0) {
-		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore(ks->ext, ks->ext_len, k8_ext_delete_cb, 0)));
+		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore((uint8_t*)ks->str.s, ks->str.l, k8_ext_delete_cb, 0)));
 	} else {
 		v8::Local<v8::String> str;
 		if (ks->enc == 1) {
-			if (!v8::String::NewFromOneByte(args.GetIsolate(), ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&str))
+			if (!v8::String::NewFromOneByte(args.GetIsolate(), (uint8_t*)ks->str.s, v8::NewStringType::kNormal, ks->str.l).ToLocal(&str))
 				args.GetReturnValue().SetNull();
 			else args.GetReturnValue().Set(str);
 		} else {
-			if (!v8::String::NewFromUtf8(args.GetIsolate(), (char*)ks->ext, v8::NewStringType::kNormal, ks->ext_len).ToLocal(&str))
+			if (!v8::String::NewFromUtf8(args.GetIsolate(), (char*)ks->str.s, v8::NewStringType::kNormal, ks->str.l).ToLocal(&str))
 				args.GetReturnValue().SetNull();
 			else args.GetReturnValue().Set(str);
 		}
 	}
 }
 
-static void k8_gzread(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void l8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() < 2 || !args[0]->IsExternal()) {
 		args.GetReturnValue().SetNull();
 	} else {
-		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
 		int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-		if (sz > ks->ext_cap) {
-			ks->ext_cap = sz + (sz>>1) + 16;
-			ks->ext = K8_REALLOC(uint8_t, ks->ext, ks->ext_cap);
+		if (sz > ks->str.m) {
+			ks->str.m = sz + (sz>>1) + 16;
+			ks->str.s = K8_REALLOC(char, ks->str.s, ks->str.m);
 		}
-		ks->ext_len = ks_read(ks, ks->ext, sz);
+		ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
 		k8_set_ret(args, ks);
 	}
 }
 
-static void k8_gzreaduntil(const v8::FunctionCallbackInfo<v8::Value> &args)
+static void l8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
 		args.GetReturnValue().SetNull();
 	} else {
-		k8_gzfile_t *ks = (k8_gzfile_t*)args[0].As<v8::External>()->Value();
+		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
 		int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : -1;
-		int64_t ret = ks_getuntil2(ks, sep, 0);
+		int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 0);
 		if (ret >= 0) k8_set_ret(args, ks);
 		else args.GetReturnValue().SetNull();
+	}
+}
+
+static void l8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	if (args.Length() == 0 || !args[0]->IsExternal()) {
+		args.GetReturnValue().SetNull();
+	} else {
+		v8::Isolate *isolate = args.GetIsolate();
+		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
+		int64_t ret = ks_readfastx(ks);
+		if (ret >= 0) {
+			v8::Local<v8::Context> context(isolate->GetCurrentContext());
+			v8::Local<v8::Array> a = v8::Array::New(isolate, 4);
+			a->Set(context, v8::Number::New(isolate, 0), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->name.s, v8::NewStringType::kNormal, ks->name.l).ToLocalChecked()).FromJust();
+			a->Set(context, v8::Number::New(isolate, 1), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->seq.s, v8::NewStringType::kNormal, ks->seq.l).ToLocalChecked()).FromJust();
+			a->Set(context, v8::Number::New(isolate, 2), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->qual.s, v8::NewStringType::kNormal, ks->qual.l).ToLocalChecked()).FromJust();
+			a->Set(context, v8::Number::New(isolate, 3), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->comment.s, v8::NewStringType::kNormal, ks->comment.l).ToLocalChecked()).FromJust();
+			args.GetReturnValue().Set(a);
+		} else args.GetReturnValue().SetNull();
 	}
 }
 
@@ -487,11 +558,13 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "warn", v8::FunctionTemplate::New(isolate, k8_warn));
 	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
 	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
-	global->Set(isolate, "gzopen", v8::FunctionTemplate::New(isolate, k8_gzopen));
-	global->Set(isolate, "gzclose", v8::FunctionTemplate::New(isolate, k8_gzclose));
-	global->Set(isolate, "gzgetc", v8::FunctionTemplate::New(isolate, k8_gzgetc));
-	global->Set(isolate, "gzread", v8::FunctionTemplate::New(isolate, k8_gzread));
-	global->Set(isolate, "gzreaduntil", v8::FunctionTemplate::New(isolate, k8_gzreaduntil));
+	global->Set(isolate, "l8_version", v8::FunctionTemplate::New(isolate, l8_version));
+	global->Set(isolate, "l8_open", v8::FunctionTemplate::New(isolate, l8_open));
+	global->Set(isolate, "l8_close", v8::FunctionTemplate::New(isolate, l8_close));
+	global->Set(isolate, "l8_getc", v8::FunctionTemplate::New(isolate, l8_getc));
+	global->Set(isolate, "l8_read", v8::FunctionTemplate::New(isolate, l8_read));
+	global->Set(isolate, "l8_readline", v8::FunctionTemplate::New(isolate, l8_readline));
+	global->Set(isolate, "l8_readfastx", v8::FunctionTemplate::New(isolate, l8_readfastx));
 	return v8::Context::New(isolate, NULL, global);
 }
 
@@ -509,7 +582,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 			while (v8::platform::PumpMessageLoop(platform, isolate)) continue;
 			return success? 0 : 1;
 		} else if (c == 'v') {
-			printf("V8: %s\nK8: %s\n", v8::V8::GetVersion(), K8_VERSION);
+			printf("V8: %s\nL8: %s\n", v8::V8::GetVersion(), L8_VERSION);
 			return 0;
 		} else {
 			fprintf(stderr, "ERROR: unrecognized option\n");
@@ -517,7 +590,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 		}
 	}
 	if (optind == argc) {
-		fprintf(stderr, "Usage: k8 [options] <script.js> [arguments]\n");
+		fprintf(stderr, "Usage: l8 [options] <script.js> [arguments]\n");
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -e STR      execute STR\n");
 		fprintf(stderr, "  -E STR      execute STR and print results\n");
@@ -549,7 +622,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 
 int main(int argc, char* argv[])
 {
-	int c, ret = 0;
+	int ret = 0;
 	v8::V8::InitializeICUDefaultLocation(argv[0]);
 	v8::V8::InitializeExternalStartupData(argv[0]);
 	std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
