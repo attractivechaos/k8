@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r89-dirty"
+#define K8_VERSION "0.3.0-r91-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -717,6 +717,22 @@ static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	args.GetReturnValue().Set(0);
 }
 
+static void k8_file_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (!args.Length() || !args[0]->IsObject()) {
+		args.GetReturnValue().SetNull();
+		return;
+	}
+	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
+	k8_bytes_t *a = (k8_bytes_t*)b->GetAlignedPointerFromInternalField(0);
+	int32_t dret;
+	int64_t ret = ks_getuntil2(ks, -1, &a->buf, &dret, 0);
+	if (ret >= 0) args.GetReturnValue().Set(dret);
+	else args.GetReturnValue().Set((int32_t)ret);
+}
+
 /***********************
  *** Getopt from BSD ***
  ***********************/
@@ -811,6 +827,7 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 		ot->SetInternalFieldCount(1);
 
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set(isolate, "readline", v8::FunctionTemplate::New(isolate, k8_file_readline));
 		pt->Set(isolate, "close", v8::FunctionTemplate::New(isolate, k8_file_close));
 
 		global->Set(isolate, "File", ft);
