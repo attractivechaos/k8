@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r88-dirty"
+#define K8_VERSION "0.3.0-r89-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -234,6 +234,7 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 
 #define K8_CALLOC(type, cnt) ((type*)calloc((cnt), sizeof(type)))
 #define K8_REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
+
 #define K8_GROW(type, ptr, __i, __m) do { \
 		if ((__i) >= (__m)) { \
 			(__m) = (__i) + 1; \
@@ -242,9 +243,19 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 		} \
 	} while (0)
 
+#define K8_GROW0(type, ptr, __i, __m) do { \
+		if ((__i) >= (__m)) { \
+			size_t old_m = (__m); \
+			(__m) = (__i) + 1; \
+			(__m) += ((__m)>>1) + 16; \
+			(ptr) = K8_REALLOC(type, ptr, (__m)); \
+			memset((ptr) + old_m, 0, ((__m) - old_m) * sizeof(type)); \
+		} \
+	} while (0)
+
 typedef struct {
 	int64_t l, m;
-	char *s;
+	uint8_t *s;
 } kstring_t;
 
 typedef struct {
@@ -316,7 +327,7 @@ static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *d
 			for (i = ks->st; i < ks->en; ++i)
 				if (ks->buf[i] == delimiter) break;
 		} else i = 0; /* never come to here! */
-		K8_GROW(char, str->s, str->l + (i - ks->st), str->m);
+		K8_GROW(uint8_t, str->s, str->l + (i - ks->st), str->m);
 		gotany = 1;
 		memcpy(str->s + str->l, ks->buf + ks->st, i - ks->st);
 		str->l = str->l + (i - ks->st);
@@ -329,7 +340,7 @@ static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *d
 	if (!gotany && ks_eof(ks)) return -1;
 	if (str->s == 0) {
 		str->m = 1;
-		str->s = K8_CALLOC(char, 1);
+		str->s = K8_CALLOC(uint8_t, 1);
 	} else if (delimiter == KS_SEP_LINE && str->l > 1 && str->s[str->l-1] == '\r') {
 		--str->l;
 	}
@@ -350,7 +361,7 @@ static int64_t ks_readfastx(k8_file_t *ks)
 	if (c != '\n') ks_getuntil2(ks, -1, &ks->comment, 0, 0); /* read FASTA/Q comment */
 	if (ks->seq.s == 0) { /* we can do this in the loop below, but that is slower */
 		ks->seq.m = 256;
-		ks->seq.s = (char*)malloc(ks->seq.m);
+		ks->seq.s = (uint8_t*)malloc(ks->seq.m);
 	}
 	while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '+' && c != '@') {
 		if (c == '\n') continue; /* skip empty lines */
@@ -358,13 +369,13 @@ static int64_t ks_readfastx(k8_file_t *ks)
 		ks_getuntil2(ks, -1, &ks->seq, 0, 1); /* read the rest of the line */
 	}
 	if (c == '>' || c == '@') ks->last_char = c; /* the first header char has been read */
-	K8_GROW(char, ks->seq.s, ks->seq.l, ks->seq.m); // ks->seq.s[ks->seq.l] below may be out of boundary
+	K8_GROW(uint8_t, ks->seq.s, ks->seq.l, ks->seq.m); // ks->seq.s[ks->seq.l] below may be out of boundary
 	ks->seq.s[ks->seq.l] = 0;	/* null terminated string */
 	ks->is_fastq = (c == '+');
 	if (!ks->is_fastq) return ks->seq.l; /* FASTA */
 	if (ks->qual.m < ks->seq.m) {	/* allocate memory for qual in case insufficient */
 		ks->qual.m = ks->seq.m;
-		ks->qual.s = (char*)realloc(ks->qual.s, ks->qual.m);
+		ks->qual.s = (uint8_t*)realloc(ks->qual.s, ks->qual.m);
 	}
 	while ((c = ks_getc(ks)) >= 0 && c != '\n'); /* skip the rest of '+' line */
 	if (c == -1) return -2; /* error: no quality string */
@@ -491,7 +502,7 @@ static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 			int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
 			if (sz > ks->str.m) {
 				ks->str.m = sz + (sz>>1) + 16;
-				ks->str.s = K8_REALLOC(char, ks->str.s, ks->str.m);
+				ks->str.s = K8_REALLOC(uint8_t, ks->str.s, ks->str.m);
 			}
 			ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
 			k8_set_ret(args, ks);
@@ -540,6 +551,119 @@ static void k8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
 			} else args.GetReturnValue().SetNull();
 		}
 	}
+}
+
+/*******************
+ * The Bytes class *
+ *******************/
+
+#define K8_SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
+#define K8_LOAD_PTR(_args, _index) (_args).This()->GetAlignedPointerFromInternalField(_index)
+
+typedef struct {
+	kstring_t buf;
+} k8_bytes_t;
+
+static void k8_bytes_new(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	k8_bytes_t *a = K8_CALLOC(k8_bytes_t, 1);
+	if (args.Length()) {
+		a->buf.m = a->buf.l = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+		a->buf.s = K8_CALLOC(uint8_t, a->buf.l);
+	}
+	K8_SAVE_PTR(args, 0, a);
+}
+
+static void k8_bytes_destroy(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+	free(a->buf.s); free(a);
+	args.GetReturnValue().Set(0);
+}
+
+static void k8_bytes_set(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	if (args.Length() == 0) {
+		args.GetReturnValue().Set(-1);
+	} else {
+		k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+		int64_t pre = a->buf.l;
+		int32_t off = args.Length() >= 2? args[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : a->buf.l;
+		if (args[0]->IsNumber()) {
+			K8_GROW0(uint8_t, a->buf.s, off, a->buf.m);
+			a->buf.s[off] = (uint8_t)args[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0);
+			a->buf.l = off + 1;
+		} else if (args[0]->IsString()) {
+			v8::String::Utf8Value str(isolate, args[0]);
+			K8_GROW0(uint8_t, a->buf.s, off + str.length(), a->buf.m);
+			memcpy(&a->buf.s[off], *str, str.length());
+			a->buf.l = off + str.length();
+		}
+		args.GetReturnValue().Set((int32_t)(a->buf.l - pre));
+	}
+}
+
+static void k8_bytes_toString(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+	bool utf8 = args.Length() >= 2? args[1]->BooleanValue(isolate) : false;
+	v8::Local<v8::String> str;
+	if (!utf8) {
+		if (!v8::String::NewFromOneByte(args.GetIsolate(), (uint8_t*)a->buf.s, v8::NewStringType::kNormal, a->buf.l).ToLocal(&str))
+			args.GetReturnValue().SetNull();
+		else args.GetReturnValue().Set(str);
+	} else {
+		if (!v8::String::NewFromUtf8(args.GetIsolate(), (char*)a->buf.s, v8::NewStringType::kNormal, a->buf.l).ToLocal(&str))
+			args.GetReturnValue().SetNull();
+		else args.GetReturnValue().Set(str);
+	}
+}
+
+static void k8_bytes_length_getter(v8::Local<v8::String> property, const v8::PropertyCallbackInfo<v8::Value> &info)
+{
+	v8::HandleScope handle_scope(info.GetIsolate());
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	info.GetReturnValue().Set((int32_t)a->buf.l);
+}
+
+static void k8_bytes_length_setter(v8::Local<v8::String> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void> &info)
+{
+	v8::HandleScope handle_scope(info.GetIsolate());
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	int32_t len = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+	if (len > a->buf.m) K8_GROW0(uint8_t, a->buf.s, len - 1, a->buf.m);
+	a->buf.l = len;
+}
+
+static void k8_bytes_capacity_getter(v8::Local<v8::String> property, const v8::PropertyCallbackInfo<v8::Value> &info)
+{
+	v8::HandleScope handle_scope(info.GetIsolate());
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	info.GetReturnValue().Set((int32_t)a->buf.m);
+}
+
+static void k8_bytes_capacity_setter(v8::Local<v8::String> property, v8::Local<v8::Value> value, const v8::PropertyCallbackInfo<void> &info)
+{
+	v8::HandleScope handle_scope(info.GetIsolate());
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	int32_t len = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+	if (len < a->buf.l) len = a->buf.l;
+	a->buf.m = len;
+	a->buf.s = K8_REALLOC(uint8_t, a->buf.s, a->buf.m);
+}
+
+static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::PropertyCallbackInfo<v8::Value> &info)
+{
+	v8::Isolate *isolate = info.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	info.GetReturnValue().Set(v8::ArrayBuffer::New(isolate, v8::ArrayBuffer::NewBackingStore((uint8_t*)a->buf.s, a->buf.l, k8_ext_delete_cb, 0)));
 }
 
 /***********************
@@ -609,6 +733,24 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "k8_read", v8::FunctionTemplate::New(isolate, k8_read));
 	global->Set(isolate, "k8_readline", v8::FunctionTemplate::New(isolate, k8_readline));
 	global->Set(isolate, "k8_readfastx", v8::FunctionTemplate::New(isolate, k8_readfastx));
+	{ // add the 'Bytes' object
+		v8::HandleScope scope(isolate);
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_bytes_new);
+		ft->SetClassName(v8::String::NewFromUtf8Literal(isolate, "Bytes"));
+
+		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
+		ot->SetInternalFieldCount(1);
+		ot->SetAccessor(v8::String::NewFromUtf8Literal(isolate, "length"), k8_bytes_length_getter, k8_bytes_length_setter);
+		ot->SetAccessor(v8::String::NewFromUtf8Literal(isolate, "capacity"), k8_bytes_capacity_getter, k8_bytes_capacity_setter);
+		ot->SetAccessor(v8::String::NewFromUtf8Literal(isolate, "buffer"), k8_bytes_buffer_getter);
+
+		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set(isolate, "destroy", v8::FunctionTemplate::New(isolate, k8_bytes_destroy));
+		pt->Set(isolate, "set", v8::FunctionTemplate::New(isolate, k8_bytes_set));
+		pt->Set(isolate, "toString", v8::FunctionTemplate::New(isolate, k8_bytes_toString));
+
+		global->Set(isolate, "Bytes", ft);
+	}
 	return v8::Context::New(isolate, NULL, global);
 }
 
