@@ -1,6 +1,6 @@
 /* The MIT License
 
-   Copyright (c) 2023 by Heng Li <lh3@me.com>
+   Copyright (c) 2023 Dana-Farber Cancer Institute
 
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r94-dirty"
+#define K8_VERSION "0.3.0-r95-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -464,25 +464,30 @@ static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	free(ks);
 }
 
+static void k8_write_core(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks, int32_t w)
+{
+	if (ks == 0 || ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
+		args.GetReturnValue().Set(-1);
+		return;
+	} else if (args[w]->IsArrayBuffer()) {
+		void *data = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		int64_t len = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+		assert(len >= 0 && len < INT32_MAX);
+		fwrite(data, 1, len, ks->fpw);
+		args.GetReturnValue().Set((int32_t)len);
+	} else if (args[w]->IsString()) {
+		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
+		fwrite(*str, 1, str.length(), ks->fpw);
+		args.GetReturnValue().Set((int32_t)str.length());
+	}
+}
+
 static void k8_write(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() < 2 || !args[0]->IsExternal()) return;
 	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-	if (ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
-		args.GetReturnValue().Set(-1);
-		return;
-	} else if (args[1]->IsArrayBuffer()) {
-		void *data = args[1].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
-		int64_t len = args[1].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
-		assert(len >= 0 && len < INT32_MAX);
-		fwrite(data, 1, len, ks->fpw);
-		args.GetReturnValue().Set((int32_t)len);
-	} else if (args[1]->IsString()) {
-		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
-		fwrite(*str, 1, str.length(), ks->fpw);
-		args.GetReturnValue().Set((int32_t)str.length());
-	}
+	k8_write_core(args, ks, 1);
 }
 
 static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
@@ -544,6 +549,21 @@ static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
+static int32_t k8_get_sep_off(const v8::FunctionCallbackInfo<v8::Value> &args, int32_t *sep)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	*sep = KS_SEP_LINE;
+	if (args.Length() >= 2) {
+		if (args[1]->IsString()) {
+			v8::String::Utf8Value str(isolate, args[0]);
+			*sep = (*str)[0];
+		} else if (args[1]->IsInt32()) {
+			*sep = args[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(KS_SEP_LINE);
+		}
+	}
+	return args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 0;
+}
+
 static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
@@ -554,8 +574,9 @@ static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
 			args.GetReturnValue().SetNull();
 		} else {
-			int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(KS_SEP_LINE) : KS_SEP_LINE;
-			int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 0);
+			int32_t sep;
+			ks->str.l = k8_get_sep_off(args, &sep);
+			int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 1);
 			if (ret >= 0) k8_set_ret(args, ks);
 			else args.GetReturnValue().SetNull();
 		}
@@ -726,22 +747,54 @@ static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 
 static void k8_file_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
-	v8::HandleScope handle_scope(args.GetIsolate());
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
 	if (!args.Length() || !args[0]->IsObject()) {
-		args.GetReturnValue().SetNull();
+		args.GetReturnValue().Set(-2);
 		return;
 	}
-	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]); // TODO: check b is a 'Bytes' instance
+	v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
 	k8_bytes_t *a = (k8_bytes_t*)b->GetAlignedPointerFromInternalField(0);
 	if (a->magic != K8_BYTES_MAGIC) {
 		args.GetReturnValue().Set(-2);
 	} else {
-		int32_t dret;
-		int64_t ret = ks_getuntil2(ks, KS_SEP_LINE, &a->buf, &dret, 0);
+		int32_t dret, sep;
+		a->buf.l = k8_get_sep_off(args, &sep);
+		int64_t ret = ks_getuntil2(ks, sep, &a->buf, &dret, 1);
 		if (ret >= 0) args.GetReturnValue().Set(dret);
 		else args.GetReturnValue().Set((int32_t)ret);
 	}
+}
+
+static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (args.Length() == 0) { // prototype.read()
+		int32_t c = ks_getc(ks);
+		args.GetReturnValue().Set(c);
+	} else if (args.Length() == 3 && args[0]->IsObject() && args[1]->IsUint32() && args[2]->IsUint32()) { // prototype.read(bytes, off, len)
+		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
+		k8_bytes_t *a = (k8_bytes_t*)b->GetAlignedPointerFromInternalField(0);
+		if (a->magic != K8_BYTES_MAGIC) {
+			args.GetReturnValue().Set(-2);
+			return;
+		}
+		uint32_t off = args[1]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
+		uint32_t len = args[2]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
+		K8_GROW(uint8_t, a->buf.s, off + len - 1, a->buf.m);
+		int64_t ret = ks_read(ks, &a->buf.s[off], len);
+		args.GetReturnValue().Set((int32_t)ret);
+	}
+}
+
+static void k8_file_write(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	k8_write_core(args, ks, 0);
 }
 
 /***********************
@@ -826,7 +879,6 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 		pt->Set(isolate, "destroy", v8::FunctionTemplate::New(isolate, k8_bytes_destroy));
 		pt->Set(isolate, "set", v8::FunctionTemplate::New(isolate, k8_bytes_set));
 		pt->Set(isolate, "toString", v8::FunctionTemplate::New(isolate, k8_bytes_toString));
-
 		global->Set(isolate, "Bytes", ft);
 	}
 	{ // add the 'File' object
@@ -838,9 +890,11 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 		ot->SetInternalFieldCount(1);
 
 		v8::Handle<v8::ObjectTemplate> pt = ft->PrototypeTemplate();
+		pt->Set(isolate, "read", v8::FunctionTemplate::New(isolate, k8_file_read));
 		pt->Set(isolate, "readline", v8::FunctionTemplate::New(isolate, k8_file_readline));
+		pt->Set(isolate, "write", v8::FunctionTemplate::New(isolate, k8_file_write));
 		pt->Set(isolate, "close", v8::FunctionTemplate::New(isolate, k8_file_close));
-
+		pt->Set(isolate, "destroy", v8::FunctionTemplate::New(isolate, k8_file_close));
 		global->Set(isolate, "File", ft);
 	}
 	return v8::Context::New(isolate, NULL, global);
