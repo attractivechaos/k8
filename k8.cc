@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r95-dirty"
+#define K8_VERSION "0.3.0-r97-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -44,201 +44,8 @@
 #include "include/v8-external.h"
 #include "include/libplatform/libplatform.h"
 
-/*******************************
- *** Fundamental V8 routines ***
- *******************************/
-
-#define K8_SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
-#define K8_LOAD_PTR(_args, _index) (_args).This()->GetAlignedPointerFromInternalField(_index)
-
 #define K8_FILE_MAGIC  (0x46696c)
 #define K8_BYTES_MAGIC (0x427974)
-
-static inline const char *k8_cstr(const v8::String::Utf8Value &str) // Convert a V8 string to C string
-{
-	return *str? *str : "<N/A>";
-}
-
-static void k8_exception(v8::Isolate* isolate, v8::TryCatch* try_catch) // Exception handling. Adapted from v8/shell.cc
-{
-	v8::HandleScope handle_scope(isolate);
-	v8::String::Utf8Value exception(isolate, try_catch->Exception());
-	const char* exception_string = k8_cstr(exception);
-	v8::Local<v8::Message> message = try_catch->Message();
-	if (message.IsEmpty()) {
-		// V8 didn't provide any extra information about this error; just print the exception.
-		fprintf(stderr, "%s\n", exception_string);
-	} else {
-		// Print (filename):(line number): (message).
-		v8::String::Utf8Value filename(isolate, message->GetScriptOrigin().ResourceName());
-		v8::Local<v8::Context> context(isolate->GetCurrentContext());
-		const char* filename_string = k8_cstr(filename);
-		int linenum = message->GetLineNumber(context).FromJust();
-		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
-		// Print line of source code.
-		v8::String::Utf8Value sourceline(isolate, message->GetSourceLine(context).ToLocalChecked());
-		const char* sourceline_string = k8_cstr(sourceline);
-		fprintf(stderr, "%s\n", sourceline_string);
-		// Print wavy underline (GetUnderline is deprecated).
-		int start = message->GetStartColumn(context).FromJust();
-		for (int i = 0; i < start; i++) fputc(' ', stderr);
-		int end = message->GetEndColumn(context).FromJust();
-		for (int i = start; i < end; i++) fputc('^', stderr);
-		fputc('\n', stderr);
-		v8::Local<v8::Value> stack_trace_string;
-		if (try_catch->StackTrace(context).ToLocal(&stack_trace_string) &&
-				stack_trace_string->IsString() &&
-				stack_trace_string.As<v8::String>()->Length() > 0)
-		{
-			v8::String::Utf8Value stack_trace(isolate, stack_trace_string);
-			const char* err = k8_cstr(stack_trace);
-			fputs(err, stderr); fputc('\n', stderr);
-		}
-	}
-}
-
-static bool k8_execute(v8::Isolate* isolate, v8::Local<v8::String> source, v8::Local<v8::Value> name, bool prt_rst) // Execute JS in a string. Adapted from v8/shell.cc
-{
-	v8::HandleScope handle_scope(isolate);
-	v8::TryCatch try_catch(isolate);
-	v8::ScriptOrigin origin(isolate, name);
-	v8::Local<v8::Context> context(isolate->GetCurrentContext());
-	v8::Local<v8::Script> script;
-	if (!v8::Script::Compile(context, source, &origin).ToLocal(&script)) {
-		k8_exception(isolate, &try_catch);
-		return false;
-	} else {
-		v8::Local<v8::Value> result;
-		if (!script->Run(context).ToLocal(&result)) {
-			assert(try_catch.HasCaught());
-			k8_exception(isolate, &try_catch);
-			return false;
-		} else {
-			assert(!try_catch.HasCaught());
-			if (prt_rst && !result->IsUndefined()) {
-				// If all went well and the result wasn't undefined then print the returned value.
-				v8::String::Utf8Value str(isolate, result);
-				puts(k8_cstr(str));
-			}
-			return true;
-		}
-	}
-}
-
-v8::MaybeLocal<v8::String> k8_readfile(v8::Isolate* isolate, const char *name) // Read an entire file. Adapted from v8/shell.cc
-{
-	FILE* file = fopen(name, "rb");
-	if (file == NULL) {
-		fprintf(stderr, "ERROR: fail to open file '%s'.\n", name);
-		return v8::Handle<v8::String>();
-	}
-
-	fseek(file, 0, SEEK_END);
-	int size = ftell(file);
-	rewind(file);
-
-	char* chars = new char[size + 1];
-	chars[size] = '\0';
-	for (int i = 0; i < size;) {
-		int read = static_cast<int>(fread(&chars[i], 1, size - i, file));
-		i += read;
-	}
-	fclose(file);
-
-	if (size > 2 && strncmp(chars, "#!", 2) == 0) { // then skip the "#!" line
-		int i;
-		for (i = 0; i < size; ++i)
-			if (chars[i] == '\n') break;
-		size -= i + 1;
-		memmove(chars, &chars[i+1], size);
-	}
-
-	v8::MaybeLocal<v8::String> result = v8::String::NewFromUtf8(
-			isolate, chars, v8::NewStringType::kNormal, static_cast<int>(size));
-	delete[] chars;
-	return result;
-}
-
-/******************************
- *** New built-in functions ***
- ******************************/
-
-static void k8_print(const v8::FunctionCallbackInfo<v8::Value> &args) // print(): print to stdout; TAB demilited if multiple arguments are provided
-{
-	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope(args.GetIsolate());
-		if (i) putchar('\t');
-		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
-		fputs(k8_cstr(str), stdout);
-	}
-	putchar('\n');
-}
-
-static void k8_warn(const v8::FunctionCallbackInfo<v8::Value> &args) // warn(): similar print() but print to stderr
-{
-	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope(args.GetIsolate());
-		if (i) putchar('\t');
-		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
-		fputs(k8_cstr(str), stderr);
-	}
-	fputc('\n', stderr);
-}
-
-static void k8_exit(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	// If not arguments are given args[0] will yield undefined which converts to the integer value 0.
-	int exit_code = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-	fflush(stdout); fflush(stderr);
-	exit(exit_code);
-}
-
-static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): Load and execute a JS file. It also searches ONE path in $K8_PATH
-{
-	char buf[1024], *path = getenv("K8_PATH");
-	FILE *fp;
-	for (int i = 0; i < args.Length(); i++) {
-		v8::HandleScope handle_scope(args.GetIsolate());
-		v8::String::Utf8Value file(args.GetIsolate(), args[i]);
-		buf[0] = 0;
-		if ((fp = fopen(*file, "r")) != 0) {
-			fclose(fp);
-			assert(strlen(*file) < 1023);
-			strcpy(buf, *file);
-		} else if (path) { // TODO: to allow multiple paths separated by ":"
-			assert(strlen(path) + strlen(*file) + 1 < 1023);
-			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
-			if ((fp = fopen(buf, "r")) == 0) buf[0] = 0;
-			else fclose(fp);
-		}
-		if (buf[0] == 0) {
-			args.GetIsolate()->ThrowError("[load] fail to locate the file");
-			return;
-		}
-		v8::Local<v8::String> source;
-		if (!k8_readfile(args.GetIsolate(), buf).ToLocal(&source)) {
-			args.GetIsolate()->ThrowError("[load] fail to read the file");
-			return;
-		}
-		if (!k8_execute(args.GetIsolate(), source, args[i], false)) {
-			args.GetIsolate()->ThrowError("[load] fail to execute the file");
-			return;
-		}
-	}
-}
-
-static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), K8_VERSION).ToLocalChecked());
-}
-
-/****************
- * File reading *
- ****************/
-
-#define KS_SEP_SPACE 0
-#define KS_SEP_TAB   1
-#define KS_SEP_LINE  2
 
 #define K8_CALLOC(type, cnt) ((type*)calloc((cnt), sizeof(type)))
 #define K8_REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
@@ -260,6 +67,14 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 			memset((ptr) + old_m, 0, ((__m) - old_m) * sizeof(type)); \
 		} \
 	} while (0)
+
+/****************
+ *** File I/O ***
+ ****************/
+
+#define KS_SEP_SPACE 0
+#define KS_SEP_TAB   1
+#define KS_SEP_LINE  2
 
 typedef struct {
 	int64_t l, m;
@@ -302,6 +117,17 @@ static k8_file_t *ks_open(const char *fn, const char *mode)
 	return ks;
 }
 
+static void ks_close(k8_file_t *ks)
+{
+	if (ks == 0) return;
+	if (ks->fp) gzclose(ks->fp);
+	if (ks->fpw) fclose(ks->fpw);
+	free(ks->buf);
+	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
+	memset(ks, 0, sizeof(*ks));
+	free(ks);
+}
+
 static inline int32_t ks_getc(k8_file_t *ks)
 {
 	if (ks_err(ks)) return -3;
@@ -320,9 +146,11 @@ static int64_t ks_read(k8_file_t *ks, uint8_t *buf, int64_t len)
 	int64_t off = 0;
 	if (ks->is_eof && ks->st >= ks->en) return -1;
 	while (len > ks->en - ks->st) {
-		int l = ks->en - ks->st;
-		memcpy(buf + off, ks->buf + ks->st, l);
-		len -= l; off += l;
+		int64_t l = ks->en - ks->st;
+		if (l > 0) {
+			memcpy(buf + off, ks->buf + ks->st, l);
+			len -= l; off += l;
+		}
 		ks->st = 0;
 		ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
 		if (ks->en < ks->buf_size) ks->is_eof = 1;
@@ -331,6 +159,25 @@ static int64_t ks_read(k8_file_t *ks, uint8_t *buf, int64_t len)
 	memcpy(buf + off, ks->buf + ks->st, len);
 	ks->st += len;
 	return off + len;
+}
+
+static int64_t ks_read_all(k8_file_t *ks, kstring_t *str)
+{
+	str->l = 0;
+	while (!ks_eof(ks)) {
+		int64_t l = ks->en - ks->st;
+		if (l > 0) {
+			K8_GROW(uint8_t, str->s, str->l + l, str->m);
+			memcpy(&str->s[str->l], &ks->buf[ks->st], l);
+			str->l += l;
+		}
+		ks->st = 0;
+		ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
+		if (ks->en < ks->buf_size) ks->is_eof = 1;
+		if (ks->en <= 0) break;
+	}
+	str->s[str->l] = 0; // always enough room due to K8_GROW() is requesting on extra byte
+	return str->l;
 }
 
 static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *dret, int appen)
@@ -421,6 +268,180 @@ static int64_t ks_readfastx(k8_file_t *ks)
 	return ks->seq.l;
 }
 
+/*******************************
+ *** Fundamental V8 routines ***
+ *******************************/
+
+#define K8_SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
+#define K8_LOAD_PTR(_args, _index) (_args).This()->GetAlignedPointerFromInternalField(_index)
+
+static inline const char *k8_cstr(const v8::String::Utf8Value &str) // Convert a V8 string to C string
+{
+	return *str? *str : "<N/A>";
+}
+
+static void k8_exception(v8::Isolate* isolate, v8::TryCatch* try_catch) // Exception handling. Adapted from v8/shell.cc
+{
+	v8::HandleScope handle_scope(isolate);
+	v8::String::Utf8Value exception(isolate, try_catch->Exception());
+	const char* exception_string = k8_cstr(exception);
+	v8::Local<v8::Message> message = try_catch->Message();
+	if (message.IsEmpty()) {
+		// V8 didn't provide any extra information about this error; just print the exception.
+		fprintf(stderr, "%s\n", exception_string);
+	} else {
+		// Print (filename):(line number): (message).
+		v8::String::Utf8Value filename(isolate, message->GetScriptOrigin().ResourceName());
+		v8::Local<v8::Context> context(isolate->GetCurrentContext());
+		const char* filename_string = k8_cstr(filename);
+		int linenum = message->GetLineNumber(context).FromJust();
+		fprintf(stderr, "%s:%i: %s\n", filename_string, linenum, exception_string);
+		// Print line of source code.
+		v8::String::Utf8Value sourceline(isolate, message->GetSourceLine(context).ToLocalChecked());
+		const char* sourceline_string = k8_cstr(sourceline);
+		fprintf(stderr, "%s\n", sourceline_string);
+		// Print wavy underline (GetUnderline is deprecated).
+		int start = message->GetStartColumn(context).FromJust();
+		for (int i = 0; i < start; i++) fputc(' ', stderr);
+		int end = message->GetEndColumn(context).FromJust();
+		for (int i = start; i < end; i++) fputc('^', stderr);
+		fputc('\n', stderr);
+		v8::Local<v8::Value> stack_trace_string;
+		if (try_catch->StackTrace(context).ToLocal(&stack_trace_string) &&
+				stack_trace_string->IsString() &&
+				stack_trace_string.As<v8::String>()->Length() > 0)
+		{
+			v8::String::Utf8Value stack_trace(isolate, stack_trace_string);
+			const char* err = k8_cstr(stack_trace);
+			fputs(err, stderr); fputc('\n', stderr);
+		}
+	}
+}
+
+static bool k8_execute(v8::Isolate* isolate, v8::Local<v8::String> source, v8::Local<v8::Value> name, bool prt_rst) // Execute JS in a string. Adapted from v8/shell.cc
+{
+	v8::HandleScope handle_scope(isolate);
+	v8::TryCatch try_catch(isolate);
+	v8::ScriptOrigin origin(isolate, name);
+	v8::Local<v8::Context> context(isolate->GetCurrentContext());
+	v8::Local<v8::Script> script;
+	if (!v8::Script::Compile(context, source, &origin).ToLocal(&script)) {
+		k8_exception(isolate, &try_catch);
+		return false;
+	} else {
+		v8::Local<v8::Value> result;
+		if (!script->Run(context).ToLocal(&result)) {
+			assert(try_catch.HasCaught());
+			k8_exception(isolate, &try_catch);
+			return false;
+		} else {
+			assert(!try_catch.HasCaught());
+			if (prt_rst && !result->IsUndefined()) {
+				// If all went well and the result wasn't undefined then print the returned value.
+				v8::String::Utf8Value str(isolate, result);
+				puts(k8_cstr(str));
+			}
+			return true;
+		}
+	}
+}
+
+v8::MaybeLocal<v8::String> k8_readfile(v8::Isolate* isolate, const char *name) // Read an entire file. Adapted from v8/shell.cc
+{
+	kstring_t str = {0,0,0};
+	k8_file_t *ks = ks_open(name, 0);
+	if (ks == 0) {
+		fprintf(stderr, "ERROR: fail to open file '%s'.\n", name);
+		return v8::Handle<v8::String>();
+	}
+	ks_read_all(ks, &str);
+	ks_close(ks);
+
+	if (str.l > 2 && strncmp((char*)str.s, "#!", 2) == 0) { // then skip the "#!" line
+		int64_t i;
+		for (i = 0; i < str.l; ++i)
+			if (str.s[i] == '\n') break;
+		str.l -= i + 1;
+		memmove(str.s, &str.s[i+1], str.l);
+	}
+	v8::MaybeLocal<v8::String> result = v8::String::NewFromUtf8(isolate, (char*)str.s, v8::NewStringType::kNormal, str.l);
+	free(str.s);
+	return result;
+}
+
+/******************************
+ *** New built-in functions ***
+ ******************************/
+
+static void k8_print(const v8::FunctionCallbackInfo<v8::Value> &args) // print(): print to stdout; TAB demilited if multiple arguments are provided
+{
+	for (int i = 0; i < args.Length(); i++) {
+		v8::HandleScope handle_scope(args.GetIsolate());
+		if (i) putchar('\t');
+		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
+		fputs(k8_cstr(str), stdout);
+	}
+	putchar('\n');
+}
+
+static void k8_warn(const v8::FunctionCallbackInfo<v8::Value> &args) // warn(): similar print() but print to stderr
+{
+	for (int i = 0; i < args.Length(); i++) {
+		v8::HandleScope handle_scope(args.GetIsolate());
+		if (i) putchar('\t');
+		v8::String::Utf8Value str(args.GetIsolate(), args[i]);
+		fputs(k8_cstr(str), stderr);
+	}
+	fputc('\n', stderr);
+}
+
+static void k8_exit(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	// If not arguments are given args[0] will yield undefined which converts to the integer value 0.
+	int exit_code = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+	fflush(stdout); fflush(stderr);
+	exit(exit_code);
+}
+
+static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): Load and execute a JS file. It also searches ONE path in $K8_PATH
+{
+	char buf[1024], *path = getenv("K8_PATH");
+	FILE *fp;
+	for (int i = 0; i < args.Length(); i++) {
+		v8::HandleScope handle_scope(args.GetIsolate());
+		v8::String::Utf8Value file(args.GetIsolate(), args[i]);
+		buf[0] = 0;
+		if ((fp = fopen(*file, "r")) != 0) {
+			fclose(fp);
+			assert(strlen(*file) < 1023);
+			strcpy(buf, *file);
+		} else if (path) { // TODO: to allow multiple paths separated by ":"
+			assert(strlen(path) + strlen(*file) + 1 < 1023);
+			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
+			if ((fp = fopen(buf, "r")) == 0) buf[0] = 0;
+			else fclose(fp);
+		}
+		if (buf[0] == 0) {
+			args.GetIsolate()->ThrowError("[load] fail to locate the file");
+			return;
+		}
+		v8::Local<v8::String> source;
+		if (!k8_readfile(args.GetIsolate(), buf).ToLocal(&source)) {
+			args.GetIsolate()->ThrowError("[load] fail to read the file");
+			return;
+		}
+		if (!k8_execute(args.GetIsolate(), source, args[i], false)) {
+			args.GetIsolate()->ThrowError("[load] fail to execute the file");
+			return;
+		}
+	}
+}
+
+static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	args.GetReturnValue().Set(v8::String::NewFromUtf8Literal(args.GetIsolate(), K8_VERSION));
+}
+
 /*****************************
  * K8 file reading functions *
  *****************************/
@@ -458,12 +479,7 @@ static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (args.Length() == 0 || !args[0]->IsExternal()) return;
 	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
 	if (ks->magic != K8_FILE_MAGIC) return;
-	if (ks->fp) gzclose(ks->fp);
-	if (ks->fpw) fclose(ks->fpw);
-	free(ks->buf);
-	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
-	memset(ks, 0, sizeof(*ks));
-	free(ks);
+	ks_close(ks);
 }
 
 static void k8_write_core(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks, int32_t w)
@@ -508,9 +524,7 @@ static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void k8_ext_delete_cb(void *data, size_t len, void *aux) // do nothing
-{
-}
+static void k8_ext_delete_cb(void *data, size_t len, void *aux) {} // do nothing
 
 static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks)
 {
@@ -541,10 +555,7 @@ static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 			args.GetReturnValue().SetNull();
 		} else {
 			int64_t sz = args[1]->IntegerValue(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-			if (sz > ks->str.m) {
-				ks->str.m = sz + (sz>>1) + 16;
-				ks->str.s = K8_REALLOC(uint8_t, ks->str.s, ks->str.m);
-			}
+			K8_GROW(uint8_t, ks->str.s, sz, ks->str.m);
 			ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
 			k8_set_ret(args, ks);
 		}
@@ -742,9 +753,7 @@ static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
-	if (ks->fp) gzclose(ks->fp);
-	if (ks->fpw) fclose(ks->fpw);
-	free(ks);
+	ks_close(ks);
 	K8_SAVE_PTR(args, 0, 0);
 	args.GetReturnValue().Set(0);
 }
@@ -936,10 +945,8 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 
 	// pass command-line arguments though the "arguments" array
 	v8::Local<v8::Array> args = v8::Array::New(isolate, argc - optind - 1);
-	for (int i = optind + 1; i < argc; ++i) {
-		v8::Local<v8::String> arg = v8::String::NewFromUtf8(isolate, argv[i]).ToLocalChecked();
-		args->Set(context, i - optind - 1, arg).FromJust();
-	}
+	for (int i = optind + 1; i < argc; ++i)
+		args->Set(context, i - optind - 1, v8::String::NewFromUtf8(isolate, argv[i]).ToLocalChecked()).FromJust();
     v8::Local<v8::String> name = v8::String::NewFromUtf8Literal(isolate, "arguments", v8::NewStringType::kInternalized);
 	context->Global()->Set(context, name, args).FromJust();
 
