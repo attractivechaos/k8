@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.1.0-r4-dirty"
+#define K8_VERSION "0.3.0-r88-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -249,6 +249,7 @@ typedef struct {
 
 typedef struct {
 	gzFile fp;
+	FILE *fpw;
 	int32_t st, en, buf_size, enc, last_char;
 	int32_t is_eof:16, is_fastq:16;
 	uint8_t *buf;
@@ -380,24 +381,28 @@ static int64_t ks_readfastx(k8_file_t *ks)
 
 static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
-	v8::HandleScope handle_scope(args.GetIsolate());
-	gzFile fp;
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	gzFile fp = 0;
+	FILE *fpw = 0;
+	bool write_file = args.Length() >= 2? args[1]->BooleanValue(isolate) : false;
 	if (args.Length() > 0) {
-		v8::String::Utf8Value str(args.GetIsolate(), args[0]);
+		v8::String::Utf8Value str(isolate, args[0]);
 		const char *fn = k8_cstr(str);
-		fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
-	} else {
-		fp = gzdopen(0, "r");
-	}
-	if (fp) {
+		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, "w") : stdin;
+		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
+	} else fp = gzdopen(0, "r");
+	if (fp || fpw) {
 		k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
-		ks->fp = fp;
-		ks->buf_size = 0x40000;
-		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
-		ks->enc = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : 1;
-		args.GetReturnValue().Set(v8::External::New(args.GetIsolate(), ks));
+		ks->fp = fp, ks->fpw = fpw;
+		if (fp) {
+			ks->buf_size = 0x40000;
+			ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
+			ks->enc = args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 1;
+		}
+		args.GetReturnValue().Set(v8::External::New(isolate, ks));
 	} else {
-		args.GetIsolate()->ThrowError("gzopen: failed to open file");
+		isolate->ThrowError("k8_open: failed to open file");
 		args.GetReturnValue().SetNull();
 	}
 }
@@ -407,10 +412,32 @@ static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args.Length() == 0 || !args[0]->IsExternal()) return;
 	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-	gzclose(ks->fp);
+	if (ks->fp) gzclose(ks->fp);
+	if (ks->fpw) fclose(ks->fpw);
 	free(ks->buf);
 	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
 	free(ks);
+}
+
+static void k8_write(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::HandleScope handle_scope(args.GetIsolate());
+	if (args.Length() < 2 || !args[0]->IsExternal()) return;
+	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
+	if (ks->fpw == 0) {
+		args.GetReturnValue().Set(-1);
+		return;
+	} else if (args[1]->IsArrayBuffer()) {
+		void *data = args[1].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		int64_t len = args[1].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+		assert(len >= 0 && len < INT32_MAX);
+		fwrite(data, 1, len, ks->fpw);
+		args.GetReturnValue().Set((int32_t)len);
+	} else if (args[1]->IsString()) {
+		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
+		fwrite(*str, 1, str.length(), ks->fpw);
+		args.GetReturnValue().Set((int32_t)str.length());
+	}
 }
 
 static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
@@ -420,8 +447,12 @@ static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
 		args.GetReturnValue().Set(-1);
 	} else {
 		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		int32_t c = ks_getc(ks);
-		args.GetReturnValue().Set(c);
+		if (ks->fp == 0) {
+			args.GetReturnValue().Set(-1);
+		} else {
+			int32_t c = ks_getc(ks);
+			args.GetReturnValue().Set(c);
+		}
 	}
 }
 
@@ -454,13 +485,17 @@ static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 		args.GetReturnValue().SetNull();
 	} else {
 		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-		if (sz > ks->str.m) {
-			ks->str.m = sz + (sz>>1) + 16;
-			ks->str.s = K8_REALLOC(char, ks->str.s, ks->str.m);
+		if (ks->fp == 0) {
+			args.GetReturnValue().SetNull();
+		} else {
+			int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+			if (sz > ks->str.m) {
+				ks->str.m = sz + (sz>>1) + 16;
+				ks->str.s = K8_REALLOC(char, ks->str.s, ks->str.m);
+			}
+			ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
+			k8_set_ret(args, ks);
 		}
-		ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
-		k8_set_ret(args, ks);
 	}
 }
 
@@ -471,10 +506,14 @@ static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 		args.GetReturnValue().SetNull();
 	} else {
 		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : -1;
-		int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 0);
-		if (ret >= 0) k8_set_ret(args, ks);
-		else args.GetReturnValue().SetNull();
+		if (ks->fp == 0) {
+			args.GetReturnValue().SetNull();
+		} else {
+			int32_t sep = args.Length() >= 2? args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0) : -1;
+			int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 0);
+			if (ret >= 0) k8_set_ret(args, ks);
+			else args.GetReturnValue().SetNull();
+		}
 	}
 }
 
@@ -484,18 +523,22 @@ static void k8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (args.Length() == 0 || !args[0]->IsExternal()) {
 		args.GetReturnValue().SetNull();
 	} else {
-		v8::Isolate *isolate = args.GetIsolate();
 		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		int64_t ret = ks_readfastx(ks);
-		if (ret >= 0) {
-			v8::Local<v8::Context> context(isolate->GetCurrentContext());
-			v8::Local<v8::Array> a = v8::Array::New(isolate, 4);
-			a->Set(context, v8::Number::New(isolate, 0), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->name.s, v8::NewStringType::kNormal, ks->name.l).ToLocalChecked()).FromJust();
-			a->Set(context, v8::Number::New(isolate, 1), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->seq.s, v8::NewStringType::kNormal, ks->seq.l).ToLocalChecked()).FromJust();
-			a->Set(context, v8::Number::New(isolate, 2), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->qual.s, v8::NewStringType::kNormal, ks->qual.l).ToLocalChecked()).FromJust();
-			a->Set(context, v8::Number::New(isolate, 3), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->comment.s, v8::NewStringType::kNormal, ks->comment.l).ToLocalChecked()).FromJust();
-			args.GetReturnValue().Set(a);
-		} else args.GetReturnValue().SetNull();
+		if (ks->fp == 0) {
+			args.GetReturnValue().SetNull();
+		} else {
+			v8::Isolate *isolate = args.GetIsolate();
+			int64_t ret = ks_readfastx(ks);
+			if (ret >= 0) {
+				v8::Local<v8::Context> context(isolate->GetCurrentContext());
+				v8::Local<v8::Array> a = v8::Array::New(isolate, 4);
+				a->Set(context, v8::Number::New(isolate, 0), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->name.s, v8::NewStringType::kNormal, ks->name.l).ToLocalChecked()).FromJust();
+				a->Set(context, v8::Number::New(isolate, 1), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->seq.s, v8::NewStringType::kNormal, ks->seq.l).ToLocalChecked()).FromJust();
+				a->Set(context, v8::Number::New(isolate, 2), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->qual.s, v8::NewStringType::kNormal, ks->qual.l).ToLocalChecked()).FromJust();
+				a->Set(context, v8::Number::New(isolate, 3), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->comment.s, v8::NewStringType::kNormal, ks->comment.l).ToLocalChecked()).FromJust();
+				args.GetReturnValue().Set(a);
+			} else args.GetReturnValue().SetNull();
+		}
 	}
 }
 
@@ -561,6 +604,7 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
 	global->Set(isolate, "k8_open", v8::FunctionTemplate::New(isolate, k8_open));
 	global->Set(isolate, "k8_close", v8::FunctionTemplate::New(isolate, k8_close));
+	global->Set(isolate, "k8_write", v8::FunctionTemplate::New(isolate, k8_write));
 	global->Set(isolate, "k8_getc", v8::FunctionTemplate::New(isolate, k8_getc));
 	global->Set(isolate, "k8_read", v8::FunctionTemplate::New(isolate, k8_read));
 	global->Set(isolate, "k8_readline", v8::FunctionTemplate::New(isolate, k8_readline));
