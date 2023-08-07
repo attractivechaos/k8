@@ -22,7 +22,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r91-dirty"
+#define K8_VERSION "0.3.0-r92-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -46,6 +46,9 @@
 /*******************************
  *** Fundamental V8 routines ***
  *******************************/
+
+#define K8_SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
+#define K8_LOAD_PTR(_args, _index) (_args).This()->GetAlignedPointerFromInternalField(_index)
 
 static inline const char *k8_cstr(const v8::String::Utf8Value &str) // Convert a V8 string to C string
 {
@@ -270,27 +273,6 @@ typedef struct {
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
 
-static k8_file_t *ks_open(const char *fn, bool write_file)
-{
-	gzFile fp = 0;
-	FILE *fpw = 0;
-	if (fn) {
-		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, "wb") : stdout;
-		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
-	} else {
-		if (write_file) fpw = stdout;
-		else fp = gzdopen(0, "r");
-	}
-	if (fp == 0 && fpw == 0) return 0;
-	k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
-	ks->fp = fp, ks->fpw = fpw;
-	if (fp) {
-		ks->buf_size = 0x40000;
-		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
-	}
-	return ks;
-}
-
 static inline int32_t ks_getc(k8_file_t *ks)
 {
 	if (ks_err(ks)) return -3;
@@ -411,23 +393,52 @@ static int64_t ks_readfastx(k8_file_t *ks)
  * K8 file reading functions *
  *****************************/
 
+static k8_file_t *ks_open(const char *fn, const char *mode)
+{
+	gzFile fp = 0;
+	FILE *fpw = 0;
+	int32_t write_file = (mode && strchr(mode, 'w') && strchr(mode, 'r') == 0);
+	if (fn) {
+		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, mode) : stdout;
+		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
+	} else {
+		if (write_file) fpw = stdout;
+		else fp = gzdopen(0, "r");
+	}
+	if (fp == 0 && fpw == 0) return 0;
+	k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
+	ks->fp = fp, ks->fpw = fpw;
+	if (fp) {
+		ks->buf_size = 0x40000;
+		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
+	}
+	return ks;
+}
+
 static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
-	bool write_file = args.Length() >= 2? args[1]->BooleanValue(isolate) : false;
 	k8_file_t *ks = 0;
-	if (args.Length() > 0) {
-		v8::String::Utf8Value str(isolate, args[0]);
-		const char *fn = k8_cstr(str);
-		ks = ks_open(fn, write_file);
-	} else ks = ks_open(0, false);
-	if (ks) {
+	if (args.Length() >= 2) {
+		v8::String::Utf8Value fn(isolate, args[0]);
+		v8::String::Utf8Value mode(isolate, args[1]);
+		ks = ks_open(*fn, *mode);
+	} else if (args.Length() == 1) {
+		v8::String::Utf8Value fn(isolate, args[0]);
+		ks = ks_open(*fn, 0);
+	} else { // args.Length() == 0
+		ks = ks_open(0, 0);
+	}
+	if (ks == 0) { // error
+		if (args.IsConstructCall())
+			isolate->ThrowError("k8_open: failed to open file");
+		args.GetReturnValue().SetNull();
+	} else if (args.IsConstructCall()) { // called as "new File()"
+		K8_SAVE_PTR(args, 0, ks);
+	} else { // called as k8_open()
 		ks->enc = args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 1;
 		args.GetReturnValue().Set(v8::External::New(isolate, ks));
-	} else {
-		isolate->ThrowError("k8_open: failed to open file");
-		args.GetReturnValue().SetNull();
 	}
 }
 
@@ -570,9 +581,6 @@ static void k8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
  * The Bytes class *
  *******************/
 
-#define K8_SAVE_PTR(_args, _index, _ptr)  (_args).This()->SetAlignedPointerInInternalField(_index, (void*)(_ptr))
-#define K8_LOAD_PTR(_args, _index) (_args).This()->GetAlignedPointerFromInternalField(_index)
-
 typedef struct {
 	kstring_t buf;
 } k8_bytes_t;
@@ -682,30 +690,6 @@ static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::Pro
 /******************
  * The File class *
  ******************/
-
-static void k8_file_new(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::Isolate *isolate = args.GetIsolate();
-	v8::HandleScope handle_scope(isolate);
-	bool write_file = false;
-	if (args.Length() >= 2) {
-		v8::String::Utf8Value str(isolate, args[0]);
-		const char *mode = *str;
-		write_file = strchr(mode, 'w')? true : false;
-	}
-	k8_file_t *ks = 0;
-	if (args.Length() > 0) {
-		v8::String::Utf8Value str(isolate, args[0]);
-		const char *fn = k8_cstr(str);
-		ks = ks_open(fn, write_file);
-	} else ks = ks_open(0, false);
-	if (ks == 0) {
-		isolate->ThrowError("k8_open: failed to open file");
-		args.GetReturnValue().SetNull();
-	} else {
-		K8_SAVE_PTR(args, 0, ks);
-	}
-}
 
 static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
@@ -820,7 +804,7 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	}
 	{ // add the 'File' object
 		v8::HandleScope scope(isolate);
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_file_new);
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_open);
 		ft->SetClassName(v8::String::NewFromUtf8Literal(isolate, "File"));
 
 		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
