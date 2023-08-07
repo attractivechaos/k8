@@ -1,6 +1,7 @@
 /* The MIT License
 
    Copyright (c) 2023 Dana-Farber Cancer Institute
+                 2012-2013, 2016 Attractive Chaos
 
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
@@ -278,6 +279,29 @@ typedef struct {
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
 
+static k8_file_t *ks_open(const char *fn, const char *mode)
+{
+	gzFile fp = 0;
+	FILE *fpw = 0;
+	int32_t write_file = (mode && strchr(mode, 'w') && strchr(mode, 'r') == 0);
+	if (fn) {
+		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, mode) : stdout;
+		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
+	} else {
+		if (write_file) fpw = stdout;
+		else fp = gzdopen(0, "r");
+	}
+	if (fp == 0 && fpw == 0) return 0;
+	k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
+	ks->magic = K8_FILE_MAGIC;
+	ks->fp = fp, ks->fpw = fpw;
+	if (fp) {
+		ks->buf_size = 0x40000;
+		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
+	}
+	return ks;
+}
+
 static inline int32_t ks_getc(k8_file_t *ks)
 {
 	if (ks_err(ks)) return -3;
@@ -401,29 +425,6 @@ static int64_t ks_readfastx(k8_file_t *ks)
  * K8 file reading functions *
  *****************************/
 
-static k8_file_t *ks_open(const char *fn, const char *mode)
-{
-	gzFile fp = 0;
-	FILE *fpw = 0;
-	int32_t write_file = (mode && strchr(mode, 'w') && strchr(mode, 'r') == 0);
-	if (fn) {
-		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, mode) : stdout;
-		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
-	} else {
-		if (write_file) fpw = stdout;
-		else fp = gzdopen(0, "r");
-	}
-	if (fp == 0 && fpw == 0) return 0;
-	k8_file_t *ks = K8_CALLOC(k8_file_t, 1);
-	ks->magic = K8_FILE_MAGIC;
-	ks->fp = fp, ks->fpw = fpw;
-	if (fp) {
-		ks->buf_size = 0x40000;
-		ks->buf = K8_CALLOC(uint8_t, ks->buf_size);
-	}
-	return ks;
-}
-
 static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::Isolate *isolate = args.GetIsolate();
@@ -461,6 +462,7 @@ static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (ks->fpw) fclose(ks->fpw);
 	free(ks->buf);
 	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
+	memset(ks, 0, sizeof(*ks));
 	free(ks);
 }
 
@@ -538,7 +540,7 @@ static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
 			args.GetReturnValue().SetNull();
 		} else {
-			int32_t sz = args[1]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+			int64_t sz = args[1]->IntegerValue(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
 			if (sz > ks->str.m) {
 				ks->str.m = sz + (sz>>1) + 16;
 				ks->str.s = K8_REALLOC(uint8_t, ks->str.s, ks->str.m);
@@ -623,7 +625,7 @@ static void k8_bytes_new(const v8::FunctionCallbackInfo<v8::Value> &args)
 	k8_bytes_t *a = K8_CALLOC(k8_bytes_t, 1);
 	a->magic = K8_BYTES_MAGIC;
 	if (args.Length()) {
-		a->buf.m = a->buf.l = args[0]->Int32Value(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+		a->buf.m = a->buf.l = args[0]->IntegerValue(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
 		a->buf.s = K8_CALLOC(uint8_t, a->buf.l);
 	}
 	K8_SAVE_PTR(args, 0, a);
@@ -634,6 +636,7 @@ static void k8_bytes_destroy(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::HandleScope handle_scope(args.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
 	free(a->buf.s); free(a);
+	K8_SAVE_PTR(args, 0, 0);
 	args.GetReturnValue().Set(0);
 }
 
@@ -646,7 +649,7 @@ static void k8_bytes_set(const v8::FunctionCallbackInfo<v8::Value> &args)
 	} else {
 		k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
 		int64_t pre = a->buf.l;
-		int32_t off = args.Length() >= 2? args[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : a->buf.l;
+		int32_t off = args.Length() >= 2? args[1]->IntegerValue(isolate->GetCurrentContext()).FromMaybe(0) : a->buf.l;
 		if (args[0]->IsNumber()) {
 			K8_GROW0(uint8_t, a->buf.s, off, a->buf.m);
 			a->buf.s[off] = (uint8_t)args[0]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
@@ -701,7 +704,7 @@ static void k8_bytes_length_setter(v8::Local<v8::String> property, v8::Local<v8:
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
-	int32_t len = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+	int64_t len = value->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(a->buf.l);
 	if (len > a->buf.m) K8_GROW0(uint8_t, a->buf.s, len - 1, a->buf.m);
 	a->buf.l = len;
 }
@@ -717,7 +720,7 @@ static void k8_bytes_capacity_setter(v8::Local<v8::String> property, v8::Local<v
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
-	int32_t len = value->Int32Value(info.GetIsolate()->GetCurrentContext()).FromMaybe(0);
+	int64_t len = value->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(a->buf.m);
 	if (len < a->buf.l) len = a->buf.l;
 	a->buf.m = len;
 	a->buf.s = K8_REALLOC(uint8_t, a->buf.s, a->buf.m);
@@ -742,6 +745,7 @@ static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (ks->fp) gzclose(ks->fp);
 	if (ks->fpw) fclose(ks->fpw);
 	free(ks);
+	K8_SAVE_PTR(args, 0, 0);
 	args.GetReturnValue().Set(0);
 }
 
