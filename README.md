@@ -1,111 +1,101 @@
-FAQ
----
-
-#### 1. What is K8?
-
-K8 is a Javascript shell based on Google's [V8 Javascript engine][1]. It adds
-the support of flexible byte arrays and file I/O. K8 is implemented in one C++
-source file. The only dependency is zlib in addition to V8.
-
-#### 2. There are many Javascript shells with much richer features. What makes K8 special?
-
-To some extent, [Node.js][2], [Narwhal][3], [SilkJS][4], [TeaJS][5] and
-[Sorrow.js][6] are all Javascript shells. They not only provide binary storage
-and file I/O, the features available in K8, but also implement much richer
-functionality such as network I/O and database binding. However, most of the
-existing Javascript shells are designed for server-side applications, but not
-for general use cases as we do with Perl/Ruby/Python.  Take the popular Node.js
-as an example. Node.js mixes file I/O and file system operations, two distinct
-concepts, in one [File System module][7].  In the module, we can either read an
-entire file or a fixed-length data blob, but are unable to read a line as is
-provided by most other programming languages. Many other JS shell
-implementations follow the [CommonJS APIs][9], which have a similar problem: no
-usable APIs for general-purpose file I/O. After all these efforts, on file I/O,
-we even do not have a JS shell matching the usability of C, let alone
-high-level programming languages such as Perl and Python.
-
-K8 aims to provide C-like file I/O APIs. It adds a `File` object for buffered
-file reading, a `Bytes` object for flexible binary storage and a `Map` object
-for a hash map without hitting the memory limit of V8.
-
-#### 3. How to compile K8? Are there compiled binaries?
-
-You need to first compile V8 and then compile and link K8. Here is the full procedure:
-
+## Getting Started
 ```sh
-# download compilable V8 source code; K8 only works with v8-3.16
-wget -O- https://github.com/attractivechaos/k8/releases/download/v0.2.1/v8-3.16.4.tar.bz2 | tar jxf -
-# compile V8
-cd v8-3.16.4 && make -j4 x64.release
-# compile K8
-g++ -O2 -Wall -o k8 -Iinclude ../k8.cc -lpthread -lz `find out -name "libv8_base.a"` `find out -name "libv8_snapshot.a"`
+# Download precomiplied binaries
+wget -O- link-to-be-added-later | tar -jxf -
+k8-0.3.0/k8-Linux -e 'print(Math.log(2))'
+
+# Compile from source code
+wget -O- https://nodejs.org/dist/v18.17.0/node-v18.17.0.tar.gz | tar -zxf -
+cd node-v18.17.0
+git clone https://github.com/attractivechaos/k8
+cd k8 && make
 ```
 
-Alternatively, you may download the precompiled binaries for Mac and Linux from
-the [release page][release].
-
-#### 4. An earlier version of K8 implemented a generic buffered stream. Why has it been removed?
-
-To implement a generic buffered stream, we need to call a Javascript `read`
-function in C++ and transform between Javascript and C++ data representation.
-This procedure adds significant overhead. For the best performance on file
-I/O, all the `iStream` functionality has been moved to `File`. Anyway, it
-is not hard to implement buffered stream purely in Javascript.
-
-
-API Documentations
-------------------
-
-All the following objects manage some memory outside the V8 garbage collector.
-It is important to call the `close()` or the `destroy()` methods to deallocate
-the memory to avoid memory leaks.
-
-### Example
-
+The following example counts the number of lines:
 ```javascript
-var x = new Bytes(), y = new Bytes();
-x.set('foo'); x.set([0x20,0x20]); x.set('bar'); x.set('F', 0); x[3]=0x2c;
-print(x.toString())   // output: 'Foo, bar'
-y.set('BAR'); x.set(y, 5)
-print(x)              // output: 'Foo, BAR'
-x.destroy(); y.destroy()
-if (arguments.length) { // read and print file
-  var x = new Bytes(), s = new File(arguments[0]);
-  while (s.readline(x) >= 0) print(x)
-  s.close(); x.destroy();
+if (arguments.length == 0) {
+	warn("Usage: k8 this-prog.js <in.txt>");
+	exit(1);
 }
+let fp = k8_open(arguments[0]);
+if (fp == null)
+	throw Error(`Failed to open file "${arguments[0]}"`);
+let line, n_lines = 0;
+while ((line = k8_readline(fp)) != null)
+	++n_lines;
+k8_close(fp);
+print(n_lines);
+```
+
+## Introduction
+
+K8 is a Javascript runtime built on top of Google's [V8 Javascript engine][1].
+It provides synchronous APIs for plain file writing and gzip'd file reading. It
+also parses the FASTA/FASTQ format used in Bioinformatics.
+
+## Motivations
+
+Javascript is among the fastest scripting languages. It is essential for web
+development but not often used for large-scale text processing or command-line
+utilities, in my opinion, due to the lack of sensible file I/O.  Current
+Javascript runtimes such as [Node.js][node] and [Deno][deno] focus on
+[asynchronous I/O][aio] and whole-file reading. Even reading a file line by
+line, which is required to work with large files, becomes a cumbersome effort.
+K8 aims to solve this problem. With synchronous I/O APIs, Javascript is in fact
+a powerful language for developing command-line tools.
+
+## API Documentations
+
+### Functions
+
+```typescript
+// open a plain or gzip'd file for reading or a plain file for writing.
+// $encoding affects the return value of k8_read() and k8_readline()
+// $encoding=1 (default) for Latin-1 string, 2 for UTF8 string and 0 for ArrayBuffer
+function k8_open(fileName?: string, mode?: string, encoding?: number) :object
+
+// close an opened file and free internal buffers
+function k8_close(fp: object)
+
+// read a byte
+function k8_getc(fp: object) :number
+
+// read bytes. Return type determined by $encoding on k8_open()
+function k8_read(fp: object, len: number) :string|ArrayBuffer
+
+// read a line. $delimiter=0 for spaces, 1 for TAB and 2 for line
+function k8_readline(fp: object, delimiter?: number|string) :string|ArrayBuffeer
+
+// read a FASTA/FASTQ record. Return a [name,seq,qual,comment] array
+function k8_readfastx(fp: object) :Array
+
+// write $data and return the number of bytes written
+function k8_write(fp: object, data: string|ArrayBuffer) :number
+
+// print to stdout (print) or stderr (warn). TAB delimited
+function print(str1, str2)
+function warn(str1, str2)
+
+// exit
+function exit(code: number)
+
+// load a Javascript file and execute
+function load(fileName: string)
 ```
 
 ### The Bytes Object
 
-`Bytes` provides a byte array. It has the following methods:
+`Bytes` provides a byte array. **Not recommended** as Javascript has ArrayBuffer and TypedArray now.
 
-```javascript
-// Create an array of type $type in length $len. $type can be: int8_t, uint8_t, int16_t,
-// uint16_t, int32_t, uint32_t, float or double.
-new Bytes(len, type)
-
-// Equivalent to 'new Bytes(len, "uint8_t")'
-new Bytes(len)
-
-// Equivalent to 'new Bytes(0, "uint8_t")'
-new Bytes()
+```typescript
+// Create an array of byte buffer of $len in size. 
+new Bytes(len?: number)
 
 // Property: get/set length of the array
-.length
+.length: number
 
 // Property: get/set the max capacity of the array
-.capacity
-
-// The index operator. If $pos goes beyond .length, undefined will be returned.
-int obj[pos]
-
-// Change the array type to $type, equivalent to changing the pointer type. .length and
-// .capacity may be changed if the size of element is changed.
-Bytes.prototype.cast(type)
-
-// Equivalent to 'Bytes.prototype.cast("uint8_t")'
-Bytes.prototype.cast()
+.capacity: number
 
 // Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
 Bytes.prototype.destroy()
@@ -114,10 +104,10 @@ Bytes.prototype.destroy()
 // a string, an array or Bytes. The size of the array is modified if the new array
 // is larger. Return the number of modified bytes. If only one byte needs to be
 // changed, using the [] operator gives better performance.
-int Bytes.prototype.set(data, offset)
+Bytes.prototype.set(data: number|string|Array, offset: number) :number
 
 // Append $data to the byte array
-int Bytes.prototype.set(data)
+Bytes.prototype.set(data: number|string|Array) :number
 
 // Convert the byte array to string
 Bytes.prototype.toString()
@@ -125,80 +115,29 @@ Bytes.prototype.toString()
 
 ### The File Object
 
-`File` provides buffered file I/O. It has the following methods:
+`File` provides buffered file I/O. Effectively replaced by `k8_open()`
+functions. **Not recommended**.
 
 ```javascript
-// Open $fileName under $mode. $mode is in the same syntax as fopen(). Integer $fileName for
-// a file descriptor. In particular, 0 for STDIN, 1 for STDOUT and 2 for STDERR.
-new File(fileName, mode)
-
-// Equivalent to 'new File(fileName, "r")'
-new File(fileName)
-
-// Equivalent to 'new File(0)'
-new File()
-
-// Read a byte. Return -1 if reaching end-of-file
-int File.prototype.read()
-
-// Read maximum $len bytes of data to $buf, starting from $offset. Return the number of
-// bytes read to $buf. The size of $buf is unchanged unless it is smaller than $offset+$len.
-int File.prototype.read(buf, offset, len)
-
-// Write $data, which can be a string or Bytes(). Return the number of written bytes.
-// This method replies on C's fwrite() for buffering.
-int File.prototype.write(data)
-
-// Read a line to $bytes starting from $offset, using $sep as the separator. $sep==0 sets
-// the separator to isspace(), $sep==1 to (isspace() && !' ') and $sep==2 to newline. If
-// $sep is a string, the first character in the string is the separator. Return the line
-// length or -1 if reaching end-of-file.
-int File.prototype.readline(bytes, sep, offset)
-
-// Equivalent to 'File.prototype.readline(bytes, sep, 0)'
-int File.prototype.readline(bytes, sep)
-
-// Equivalent to 'File.prototype.readline(bytes, 2, 0)'
-int File.prototype.readline(bytes)
-
-// Close the file
+new File(fileName?: string, mode?: string)
+File.prototype.read() :number
+File.prototype.read(buf: Bytes, offset :number, len :number) :number
+File.prototype.readline(bytes, sep, offset) :number
+File.prototype.write(data: string|ArrayBuffer) :number
 File.prototype.close()
 ```
 
-### The Map Object
-
-`Map` provides a hash map implementation without using memory managed by V8. This can be helpful
-when we want to stage a huge hash table in memory. `Map` has the following methods:
-
-```javascript
-// Initialize a hash map
-new Map()
-
-// Put a key-value string pair to a hash map
-Map.prototype.put(key, value)
-
-// Equivalent to 'Map.prototype.put(key, "")'
-Map.prototype.put(key)
-
-// Get a key. Return 'null' if 'key' is non-existing
-string Map.prototype.get(key)
-
-// Delete a key.
-Map.prototype.del(key)
-
-// Deallocate memory
-Map.prototype.destroy()
-```
-
 [1]: http://code.google.com/p/v8/
-[2]: http://nodejs.org/
 [3]: https://github.com/tlrobinson/narwhal
 [4]: http://silkjs.net/
 [5]: http://code.google.com/p/teajs/
 [6]: https://github.com/samlecuyer/sorrow.js
 [7]: http://nodejs.org/api/fs.html
 [8]: http://nodejs.org/api/stream.html
-[9]: http://www.commonjs.org/specs/
 [11]: https://sourceforge.net/projects/lh3/files/
 [gyp]: https://gyp.gsrc.io/
 [release]: https://github.com/attractivechaos/k8/releases
+[deno]: https://deno.land
+[node]: https://nodejs.org/
+[commjs]: https://en.wikipedia.org/wiki/CommonJS
+[aio]: https://en.wikipedia.org/wiki/Asynchronous_I/O
