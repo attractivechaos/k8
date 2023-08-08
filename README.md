@@ -104,11 +104,11 @@ new File(file?: string|number = 0, mode?: string = "r")
 File.prototype.read() :number
 
 // Read $len bytes into $buf at $offset. Return the number of bytes read
-File.prototype.read(buf: Bytes, offset :number, len :number) :number
+File.prototype.read(buf: Bytes, offset: number, len: number) :number
 
 // Read a line or a token to $buf at $offset. $sep=0 for SPACE, 1 for TAB and 2
 // for newline. If $sep is a string, only the first character is considered.
-File.prototype.readline(buf: Bytes, sep :number|string = 2, offset :number = 0) :number
+File.prototype.readline(buf: Bytes, sep?: number|string = 2, offset?: number = 0) :number
 
 // Write data
 File.prototype.write(data: string|ArrayBuffer) :number
