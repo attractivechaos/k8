@@ -1,9 +1,18 @@
+#!/usr/bin/env k8
+
+load("k8.js");
+
 function main(args) {
-	let r, fp = k8_open(args[0]);
-	let n = 0, slen = 0, qlen = 0;
-	while ((r = k8_readfastx(fp)) != null)
-		++n, slen += r[1].length, qlen += r[2].length;
-	k8_close(fp);
+	if (args.length == 0) {
+		print("Usage: fqcnt.js <in.fq.gz>");
+		return 1;
+	}
+	var file = new File(args[0]);
+	var fx = new Fastx(file);
+	var n = 0, slen = 0, qlen = 0;
+	while (fx.read() >= 0)
+		++n, slen += fx.s.length, qlen += fx.q.length;
+	file.close();
 	print(n, slen, qlen);
 }
 

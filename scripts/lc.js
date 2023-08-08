@@ -2,11 +2,9 @@ if (arguments.length == 0) {
 	warn("Usage: k8 lc.js <in.txt>");
 	exit(1);
 }
-let fp = k8_open(arguments[0]);
-if (fp == null)
-	throw Error(`Failed to open file "${arguments[0]}"`);
-let line, n_lines = 0;
-while ((line = k8_readline(fp)) != null)
-	++n_lines;
-k8_close(fp);
-print(n_lines);
+let buf = new Bytes();
+let n = 0, file = new File(arguments[0]);
+while (file.readline(buf) >= 0) ++n;
+file.close();
+buf.destroy();
+print(n);

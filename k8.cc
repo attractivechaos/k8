@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.0-r107-dirty"
+#define K8_VERSION "0.3.0-r110-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -96,7 +96,6 @@ typedef struct {
 	int32_t st, en, buf_size, enc, last_char;
 	int32_t is_eof:16, is_fastq:16;
 	uint8_t *buf;
-	kstring_t str, name, seq, qual, comment;
 } k8_file_t;
 
 #define ks_err(ks) ((ks)->en < 0)
@@ -131,7 +130,6 @@ static void ks_close(k8_file_t *ks)
 	if (ks->fp) gzclose(ks->fp);
 	if (ks->fpw) fclose(ks->fpw);
 	free(ks->buf);
-	free(ks->str.s); free(ks->seq.s); free(ks->qual.s); free(ks->name.s); free(ks->comment.s);
 	memset(ks, 0, sizeof(*ks));
 	free(ks);
 }
@@ -188,11 +186,11 @@ static int64_t ks_read_all(k8_file_t *ks, kstring_t *str)
 	return str->l;
 }
 
-static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *dret, int appen)
+static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *dret, int append)
 {
 	int gotany = 0;
 	if (dret) *dret = 0;
-	str->l = appen? str->l : 0;
+	str->l = append? str->l : 0;
 	for (;;) {
 		int i = 0;
 		if (ks_err(ks)) return -3;
@@ -236,44 +234,6 @@ static int64_t ks_getuntil2(k8_file_t *ks, int delimiter, kstring_t *str, int *d
 	}
 	str->s[str->l] = '\0';
 	return str->l;
-}
-
-static int64_t ks_readfastx(k8_file_t *ks)
-{
-	int c, r;
-	if (ks->last_char == 0) { /* then jump to the next header line */
-		while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '@');
-		if (c < 0) return c; /* end of file or error*/
-		ks->last_char = c;
-	} /* else: the first header char has been read in the previous call */
-	ks->comment.l = ks->seq.l = ks->qual.l = 0; /* reset all members */
-	if ((r=ks_getuntil2(ks, KS_SEP_SPACE, &ks->name, &c, 0)) < 0) return r;  /* normal exit: EOF or error */
-	if (c != '\n') ks_getuntil2(ks, KS_SEP_LINE, &ks->comment, 0, 0); /* read FASTA/Q comment */
-	if (ks->seq.s == 0) { /* we can do this in the loop below, but that is slower */
-		ks->seq.m = 256;
-		ks->seq.s = (uint8_t*)malloc(ks->seq.m);
-	}
-	while ((c = ks_getc(ks)) >= 0 && c != '>' && c != '+' && c != '@') {
-		if (c == '\n') continue; /* skip empty lines */
-		ks->seq.s[ks->seq.l++] = c; /* this is safe: we always have enough space for 1 char */
-		ks_getuntil2(ks, KS_SEP_LINE, &ks->seq, 0, 1); /* read the rest of the line */
-	}
-	if (c == '>' || c == '@') ks->last_char = c; /* the first header char has been read */
-	K8_GROW(uint8_t, ks->seq.s, ks->seq.l, ks->seq.m); // ks->seq.s[ks->seq.l] below may be out of boundary
-	ks->seq.s[ks->seq.l] = 0;	/* null terminated string */
-	ks->is_fastq = (c == '+');
-	if (!ks->is_fastq) return ks->seq.l; /* FASTA */
-	if (ks->qual.m < ks->seq.m) {	/* allocate memory for qual in case insufficient */
-		ks->qual.m = ks->seq.m;
-		ks->qual.s = (uint8_t*)realloc(ks->qual.s, ks->qual.m);
-	}
-	while ((c = ks_getc(ks)) >= 0 && c != '\n'); /* skip the rest of '+' line */
-	if (c == -1) return -2; /* error: no quality string */
-	while ((c = ks_getuntil2(ks, KS_SEP_LINE, &ks->qual, 0, 1) >= 0 && ks->qual.l < ks->seq.l));
-	if (c == -3) return -3; /* stream error */
-	ks->last_char = 0;	/* we have not come to the next header line */
-	if (ks->seq.l != ks->qual.l) return -2; /* error: qual string is of a different length */
-	return ks->seq.l;
 }
 
 /*******************************
@@ -465,188 +425,9 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 	args.GetReturnValue().Set(v8::String::NewFromUtf8Literal(args.GetIsolate(), K8_VERSION));
 }
 
-/*****************************
- * K8 file reading functions *
- *****************************/
-
-static void k8_open(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::Isolate *isolate = args.GetIsolate();
-	v8::HandleScope handle_scope(isolate);
-	k8_file_t *ks = 0;
-	if (args.Length() >= 2) {
-		v8::String::Utf8Value fn(isolate, args[0]);
-		v8::String::Utf8Value mode(isolate, args[1]);
-		ks = ks_open(*fn, *mode);
-	} else if (args.Length() == 1) {
-		v8::String::Utf8Value fn(isolate, args[0]);
-		ks = ks_open(*fn, 0);
-	} else { // args.Length() == 0
-		ks = ks_open(0, 0);
-	}
-	if (ks == 0) { // error
-		if (args.IsConstructCall())
-			isolate->ThrowError("k8_open: failed to open file");
-		args.GetReturnValue().SetNull();
-	} else if (args.IsConstructCall()) { // called as "new File()"
-		K8_SAVE_PTR(args, 0, ks);
-	} else { // called as k8_open()
-		ks->enc = args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 1;
-		args.GetReturnValue().Set(v8::External::New(isolate, ks));
-	}
-}
-
-static void k8_close(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() == 0 || !args[0]->IsExternal()) return;
-	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-	if (ks->magic != K8_FILE_MAGIC) return;
-	ks_close(ks);
-}
-
-static void k8_write_core(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks, int32_t w)
-{
-	if (ks == 0 || ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
-		args.GetReturnValue().Set(-1);
-		return;
-	} else if (args[w]->IsArrayBuffer()) {
-		void *data = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
-		int64_t len = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
-		assert(len >= 0 && len < INT32_MAX);
-		fwrite(data, 1, len, ks->fpw);
-		args.GetReturnValue().Set((int32_t)len);
-	} else if (args[w]->IsString()) {
-		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
-		fwrite(*str, 1, str.length(), ks->fpw);
-		args.GetReturnValue().Set((int32_t)str.length());
-	}
-}
-
-static void k8_write(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() < 2 || !args[0]->IsExternal()) return;
-	k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-	k8_write_core(args, ks, 1);
-}
-
-static void k8_getc(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() == 0 || !args[0]->IsExternal()) {
-		args.GetReturnValue().Set(-1);
-	} else {
-		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
-			args.GetReturnValue().Set(-1);
-		} else {
-			int32_t c = ks_getc(ks);
-			args.GetReturnValue().Set(c);
-		}
-	}
-}
-
-static void k8_ext_delete_cb(void *data, size_t len, void *aux) {} // do nothing
-
-static void k8_set_ret(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks)
-{
-	if (ks->enc == 0) {
-		args.GetReturnValue().Set(v8::ArrayBuffer::New(args.GetIsolate(), v8::ArrayBuffer::NewBackingStore((uint8_t*)ks->str.s, ks->str.l, k8_ext_delete_cb, 0)));
-	} else {
-		v8::Local<v8::String> str;
-		if (ks->enc == 1) {
-			if (!v8::String::NewFromOneByte(args.GetIsolate(), (uint8_t*)ks->str.s, v8::NewStringType::kNormal, ks->str.l).ToLocal(&str))
-				args.GetReturnValue().SetNull();
-			else args.GetReturnValue().Set(str);
-		} else {
-			if (!v8::String::NewFromUtf8(args.GetIsolate(), (char*)ks->str.s, v8::NewStringType::kNormal, ks->str.l).ToLocal(&str))
-				args.GetReturnValue().SetNull();
-			else args.GetReturnValue().Set(str);
-		}
-	}
-}
-
-static void k8_read(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() < 2 || !args[0]->IsExternal()) {
-		args.GetReturnValue().SetNull();
-	} else {
-		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
-			args.GetReturnValue().SetNull();
-		} else {
-			int64_t sz = args[1]->IntegerValue(args.GetIsolate()->GetCurrentContext()).FromMaybe(0);
-			K8_GROW(uint8_t, ks->str.s, sz, ks->str.m);
-			ks->str.l = ks_read(ks, (uint8_t*)ks->str.s, sz);
-			k8_set_ret(args, ks);
-		}
-	}
-}
-
-static int32_t k8_get_sep_off(const v8::FunctionCallbackInfo<v8::Value> &args, int32_t *sep)
-{
-	v8::Isolate *isolate = args.GetIsolate();
-	*sep = KS_SEP_LINE;
-	if (args.Length() >= 2) {
-		if (args[1]->IsString()) {
-			v8::String::Utf8Value str(isolate, args[0]);
-			*sep = (*str)[0];
-		} else if (args[1]->IsInt32()) {
-			*sep = args[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(KS_SEP_LINE);
-		}
-	}
-	return args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 0;
-}
-
-static void k8_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() == 0 || !args[0]->IsExternal()) {
-		args.GetReturnValue().SetNull();
-	} else {
-		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
-			args.GetReturnValue().SetNull();
-		} else {
-			int32_t sep;
-			ks->str.l = k8_get_sep_off(args, &sep);
-			int64_t ret = ks_getuntil2(ks, sep, &ks->str, 0, 1);
-			if (ret >= 0) k8_set_ret(args, ks);
-			else args.GetReturnValue().SetNull();
-		}
-	}
-}
-
-static void k8_readfastx(const v8::FunctionCallbackInfo<v8::Value> &args)
-{
-	v8::HandleScope handle_scope(args.GetIsolate());
-	if (args.Length() == 0 || !args[0]->IsExternal()) {
-		args.GetReturnValue().SetNull();
-	} else {
-		k8_file_t *ks = (k8_file_t*)args[0].As<v8::External>()->Value();
-		if (ks->magic != K8_FILE_MAGIC || ks->fp == 0) {
-			args.GetReturnValue().SetNull();
-		} else {
-			v8::Isolate *isolate = args.GetIsolate();
-			int64_t ret = ks_readfastx(ks);
-			if (ret >= 0) {
-				v8::Local<v8::Context> context(isolate->GetCurrentContext());
-				v8::Local<v8::Array> a = v8::Array::New(isolate, 4);
-				a->Set(context, v8::Number::New(isolate, 0), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->name.s, v8::NewStringType::kNormal, ks->name.l).ToLocalChecked()).FromJust();
-				a->Set(context, v8::Number::New(isolate, 1), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->seq.s, v8::NewStringType::kNormal, ks->seq.l).ToLocalChecked()).FromJust();
-				a->Set(context, v8::Number::New(isolate, 2), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->qual.s, v8::NewStringType::kNormal, ks->qual.l).ToLocalChecked()).FromJust();
-				a->Set(context, v8::Number::New(isolate, 3), v8::String::NewFromOneByte(isolate, (uint8_t*)ks->comment.s, v8::NewStringType::kNormal, ks->comment.l).ToLocalChecked()).FromJust();
-				args.GetReturnValue().Set(a);
-			} else args.GetReturnValue().SetNull();
-		}
-	}
-}
-
-/*******************
- * The Bytes class *
- *******************/
+/***********************
+ *** The Bytes class ***
+ ***********************/
 
 typedef struct {
 	uint64_t magic;
@@ -760,6 +541,8 @@ static void k8_bytes_capacity_setter(v8::Local<v8::String> property, v8::Local<v
 	a->buf.s = K8_REALLOC(uint8_t, a->buf.s, a->buf.m);
 }
 
+static void k8_ext_delete_cb(void *data, size_t len, void *aux) {} // do nothing
+
 static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::PropertyCallbackInfo<v8::Value> &info)
 {
 	v8::Isolate *isolate = info.GetIsolate();
@@ -768,9 +551,47 @@ static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::Pro
 	info.GetReturnValue().Set(v8::ArrayBuffer::New(isolate, v8::ArrayBuffer::NewBackingStore((uint8_t*)a->buf.s, a->buf.l, k8_ext_delete_cb, 0)));
 }
 
-/******************
- * The File class *
- ******************/
+/**********************
+ *** The File class ***
+ **********************/
+
+static void k8_file_open(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	k8_file_t *ks = 0;
+	if (args.Length() >= 2) {
+		v8::String::Utf8Value fn(isolate, args[0]);
+		v8::String::Utf8Value mode(isolate, args[1]);
+		ks = ks_open(*fn, *mode);
+	} else if (args.Length() == 1) {
+		v8::String::Utf8Value fn(isolate, args[0]);
+		ks = ks_open(*fn, 0);
+	} else { // args.Length() == 0
+		ks = ks_open(0, 0);
+	}
+	if (ks == 0) { // error
+		isolate->ThrowError("k8_open: failed to open file");
+		args.GetReturnValue().SetNull();
+	} else if (args.IsConstructCall()) { // called as "new File()"
+		K8_SAVE_PTR(args, 0, ks);
+	}
+}
+
+static int32_t k8_get_sep_off(const v8::FunctionCallbackInfo<v8::Value> &args, int32_t *sep)
+{
+	v8::Isolate *isolate = args.GetIsolate();
+	*sep = KS_SEP_LINE;
+	if (args.Length() >= 2) {
+		if (args[1]->IsString()) {
+			v8::String::Utf8Value str(isolate, args[0]);
+			*sep = (*str)[0];
+		} else if (args[1]->IsInt32()) {
+			*sep = args[1]->Int32Value(isolate->GetCurrentContext()).FromMaybe(KS_SEP_LINE);
+		}
+	}
+	return args.Length() >= 3? args[2]->Int32Value(isolate->GetCurrentContext()).FromMaybe(0) : 0;
+}
 
 static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
@@ -823,6 +644,24 @@ static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 		K8_GROW(uint8_t, a->buf.s, off + len - 1, a->buf.m);
 		int64_t ret = ks_read(ks, &a->buf.s[off], len);
 		args.GetReturnValue().Set((int32_t)ret);
+	}
+}
+
+static void k8_write_core(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks, int32_t w)
+{
+	if (ks == 0 || ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
+		args.GetReturnValue().Set(-1);
+		return;
+	} else if (args[w]->IsArrayBuffer()) {
+		void *data = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		int64_t len = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+		assert(len >= 0 && len < INT32_MAX);
+		fwrite(data, 1, len, ks->fpw);
+		args.GetReturnValue().Set((int32_t)len);
+	} else if (args[w]->IsString()) {
+		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
+		fwrite(*str, 1, str.length(), ks->fpw);
+		args.GetReturnValue().Set((int32_t)str.length());
 	}
 }
 
@@ -893,13 +732,6 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
 	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
 	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
-	global->Set(isolate, "k8_open", v8::FunctionTemplate::New(isolate, k8_open));
-	global->Set(isolate, "k8_close", v8::FunctionTemplate::New(isolate, k8_close));
-	global->Set(isolate, "k8_write", v8::FunctionTemplate::New(isolate, k8_write));
-	global->Set(isolate, "k8_getc", v8::FunctionTemplate::New(isolate, k8_getc));
-	global->Set(isolate, "k8_read", v8::FunctionTemplate::New(isolate, k8_read));
-	global->Set(isolate, "k8_readline", v8::FunctionTemplate::New(isolate, k8_readline));
-	global->Set(isolate, "k8_readfastx", v8::FunctionTemplate::New(isolate, k8_readfastx));
 	{ // add the 'Bytes' object
 		v8::HandleScope scope(isolate);
 		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_bytes_new);
@@ -919,7 +751,7 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	}
 	{ // add the 'File' object
 		v8::HandleScope scope(isolate);
-		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_open);
+		v8::Handle<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(isolate, k8_file_open);
 		ft->SetClassName(v8::String::NewFromUtf8Literal(isolate, "File"));
 
 		v8::Handle<v8::ObjectTemplate> ot = ft->InstanceTemplate();
