@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r111-dirty"
+#define K8_VERSION "0.3.0-r114-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -41,7 +41,6 @@
 #include "include/v8-script.h"
 #include "include/v8-container.h"
 #include "include/v8-template.h"
-#include "include/v8-external.h"
 #include "include/libplatform/libplatform.h"
 
 #define K8_FILE_MAGIC  (0x46696c)
@@ -453,6 +452,7 @@ static void k8_bytes_destroy(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+	if (a == 0) return;
 	free(a->buf.s); free(a);
 	K8_SAVE_PTR(args, 0, 0);
 	args.GetReturnValue().Set(0);
@@ -462,35 +462,32 @@ static void k8_bytes_set(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
-	if (args.Length() == 0) {
-		args.GetReturnValue().Set(-1);
-	} else {
-		k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
-		int64_t pre = a->buf.l;
-		int32_t off = args.Length() >= 2? args[1]->IntegerValue(isolate->GetCurrentContext()).FromMaybe(0) : a->buf.l;
-		if (args[0]->IsNumber()) {
-			K8_GROW0(uint8_t, a->buf.s, off, a->buf.m);
-			a->buf.s[off] = (uint8_t)args[0]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
-			a->buf.l = off + 1;
-		} else if (args[0]->IsString()) {
-			v8::String::Utf8Value str(isolate, args[0]);
-			K8_GROW0(uint8_t, a->buf.s, off + str.length(), a->buf.m);
-			memcpy(&a->buf.s[off], *str, str.length());
-			a->buf.l = off + str.length();
-		} else if (args[0]->IsArray()) {
-			v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(args[0]);
-			K8_GROW0(uint8_t, a->buf.s, off + array->Length(), a->buf.m);
-			for (size_t i = 0; i < array->Length(); ++i) {
-				v8::Local<v8::Value> x;
-				if (array->Get(isolate->GetCurrentContext(), i).ToLocal(&x))
-					a->buf.s[off++] = (uint8_t)x->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
-			}
-			a->buf.l = off;
-		} else {
-			isolate->ThrowError("[k8_bytes_set] unsupported type");
+	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+	if (a == 0 || args.Length() == 0) return;
+	int64_t pre = a->buf.l;
+	int32_t off = args.Length() >= 2? args[1]->IntegerValue(isolate->GetCurrentContext()).FromMaybe(0) : a->buf.l;
+	if (args[0]->IsNumber()) {
+		K8_GROW0(uint8_t, a->buf.s, off, a->buf.m);
+		a->buf.s[off] = (uint8_t)args[0]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
+		a->buf.l = off + 1;
+	} else if (args[0]->IsString()) {
+		v8::String::Utf8Value str(isolate, args[0]);
+		K8_GROW0(uint8_t, a->buf.s, off + str.length(), a->buf.m);
+		memcpy(&a->buf.s[off], *str, str.length());
+		a->buf.l = off + str.length();
+	} else if (args[0]->IsArray()) {
+		v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(args[0]);
+		K8_GROW0(uint8_t, a->buf.s, off + array->Length(), a->buf.m);
+		for (size_t i = 0; i < array->Length(); ++i) {
+			v8::Local<v8::Value> x;
+			if (array->Get(isolate->GetCurrentContext(), i).ToLocal(&x))
+				a->buf.s[off++] = (uint8_t)x->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
 		}
-		args.GetReturnValue().Set((int32_t)(a->buf.l - pre));
+		a->buf.l = off;
+	} else {
+		isolate->ThrowError("[k8_bytes_set] unsupported type");
 	}
+	args.GetReturnValue().Set((int32_t)(a->buf.l - pre));
 }
 
 static void k8_bytes_toString(const v8::FunctionCallbackInfo<v8::Value> &args)
@@ -498,6 +495,7 @@ static void k8_bytes_toString(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(args, 0);
+	if (a == 0) return;
 	bool utf8 = args.Length() >= 2? args[1]->BooleanValue(isolate) : false;
 	v8::Local<v8::String> str;
 	if (!utf8) {
@@ -515,6 +513,7 @@ static void k8_bytes_length_getter(v8::Local<v8::String> property, const v8::Pro
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	if (a == 0) return;
 	info.GetReturnValue().Set((int32_t)a->buf.l);
 }
 
@@ -522,6 +521,7 @@ static void k8_bytes_length_setter(v8::Local<v8::String> property, v8::Local<v8:
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	if (a == 0) return;
 	int64_t len = value->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(a->buf.l);
 	if (len > a->buf.m) K8_GROW0(uint8_t, a->buf.s, len - 1, a->buf.m);
 	a->buf.l = len;
@@ -531,6 +531,7 @@ static void k8_bytes_capacity_getter(v8::Local<v8::String> property, const v8::P
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	if (a == 0) return;
 	info.GetReturnValue().Set((int32_t)a->buf.m);
 }
 
@@ -538,6 +539,7 @@ static void k8_bytes_capacity_setter(v8::Local<v8::String> property, v8::Local<v
 {
 	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
+	if (a == 0) return;
 	int64_t len = value->IntegerValue(info.GetIsolate()->GetCurrentContext()).FromMaybe(a->buf.m);
 	if (len < a->buf.l) len = a->buf.l;
 	a->buf.m = len;
@@ -548,10 +550,10 @@ static void k8_ext_delete_cb(void *data, size_t len, void *aux) {} // do nothing
 
 static void k8_bytes_buffer_getter(v8::Local<v8::String> property, const v8::PropertyCallbackInfo<v8::Value> &info)
 {
-	v8::Isolate *isolate = info.GetIsolate();
-	v8::HandleScope handle_scope(isolate);
+	v8::HandleScope handle_scope(info.GetIsolate());
 	k8_bytes_t *a = (k8_bytes_t*)K8_LOAD_PTR(info, 0);
-	info.GetReturnValue().Set(v8::ArrayBuffer::New(isolate, v8::ArrayBuffer::NewBackingStore((uint8_t*)a->buf.s, a->buf.l, k8_ext_delete_cb, 0)));
+	if (a == 0) return;
+	info.GetReturnValue().Set(v8::ArrayBuffer::New(info.GetIsolate(), v8::ArrayBuffer::NewBackingStore((uint8_t*)a->buf.s, a->buf.l, k8_ext_delete_cb, 0)));
 }
 
 /**********************
@@ -609,6 +611,7 @@ static void k8_file_close(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (ks == 0) return;
 	ks_close(ks);
 	K8_SAVE_PTR(args, 0, 0);
 	args.GetReturnValue().Set(0);
@@ -619,6 +622,7 @@ static void k8_file_readline(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (ks == 0) return;
 	if (!args.Length() || !args[0]->IsObject()) {
 		args.GetReturnValue().Set(-2);
 		return;
@@ -641,13 +645,14 @@ static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
+	if (ks == 0) return;
 	if (args.Length() == 0) { // prototype.read()
 		int32_t c = ks_getc(ks);
 		args.GetReturnValue().Set(c);
 	} else if (args.Length() == 3 && args[0]->IsObject() && args[1]->IsUint32() && args[2]->IsUint32()) { // prototype.read(bytes, off, len)
 		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
 		k8_bytes_t *a = (k8_bytes_t*)b->GetAlignedPointerFromInternalField(0);
-		if (a->magic != K8_BYTES_MAGIC) {
+		if (a->magic != K8_BYTES_MAGIC) { // TODO: well, there got to be a better way
 			args.GetReturnValue().Set(-2);
 			return;
 		}
@@ -659,29 +664,25 @@ static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 	}
 }
 
-static void k8_write_core(const v8::FunctionCallbackInfo<v8::Value> &args, k8_file_t *ks, int32_t w)
-{
-	if (ks == 0 || ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
-		args.GetReturnValue().Set(-1);
-		return;
-	} else if (args[w]->IsArrayBuffer()) {
-		void *data = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
-		int64_t len = args[w].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
-		assert(len >= 0 && len < INT32_MAX);
-		fwrite(data, 1, len, ks->fpw);
-		args.GetReturnValue().Set((int32_t)len);
-	} else if (args[w]->IsString()) {
-		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
-		fwrite(*str, 1, str.length(), ks->fpw);
-		args.GetReturnValue().Set((int32_t)str.length());
-	}
-}
-
 static void k8_file_write(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	v8::HandleScope handle_scope(args.GetIsolate());
 	k8_file_t *ks = (k8_file_t*)K8_LOAD_PTR(args, 0);
-	k8_write_core(args, ks, 0);
+	if (ks == 0) return;
+	if (ks->magic != K8_FILE_MAGIC || ks->fpw == 0) {
+		args.GetReturnValue().Set(-1);
+		return;
+	} else if (args[0]->IsArrayBuffer()) {
+		void *data = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		int64_t len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+		assert(len >= 0 && len < INT32_MAX);
+		fwrite(data, 1, len, ks->fpw);
+		args.GetReturnValue().Set((int32_t)len);
+	} else if (args[0]->IsString()) {
+		v8::String::Utf8Value str(args.GetIsolate(), args[1]);
+		fwrite(*str, 1, str.length(), ks->fpw);
+		args.GetReturnValue().Set((int32_t)str.length());
+	}
 }
 
 /***********************
