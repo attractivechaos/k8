@@ -100,14 +100,15 @@ Bytes.prototype.toString()
 // object can only be read or only be written.
 new File(file?: string|number = 0, mode?: string = "r")
 
-// Read a byte
+// Read a byte and return it
 File.prototype.read() :number
 
-// Read $len bytes into $buf at $offset. Return the number of bytes read
+// Read $len bytes into $buf at $offset. Return the number of bytes read.
 File.prototype.read(buf: Bytes, offset: number, len: number) :number
 
 // Read a line or a token to $buf at $offset. $sep=0 for SPACE, 1 for TAB and 2
 // for newline. If $sep is a string, only the first character is considered.
+// Return the delimiter if non-negative, -1 upon EOF or <-1 for errors
 File.prototype.readline(buf: Bytes, sep?: number|string = 2, offset?: number = 0) :number
 
 // Write data
