@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.0-r106-dirty"
+#define K8_VERSION "1.0-r107-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -67,6 +67,12 @@
 			memset((ptr) + old_m, 0, ((__m) - old_m) * sizeof(type)); \
 		} \
 	} while (0)
+
+#ifdef PATH_MAX
+#define K8_PATH_MAX PATH_MAX
+#else
+#define K8_PATH_MAX 4095
+#endif
 
 static char *k8_src_path = 0;
 
@@ -408,7 +414,7 @@ static void k8_exit(const v8::FunctionCallbackInfo<v8::Value> &args)
 static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): Load and execute a JS file. It also searches ONE path in $K8_PATH
 {
 	char *env_path = getenv("K8_PATH");
-	char abspath[PATH_MAX+1], buf[PATH_MAX+1];
+	char abspath[K8_PATH_MAX+1], buf[K8_PATH_MAX+1];
 	FILE *fp;
 	int32_t k;
 	realpath(k8_src_path, abspath);
@@ -421,20 +427,20 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 		v8::String::Utf8Value file(args.GetIsolate(), args[i]);
 		int32_t l_fn = strlen(*file);
 		buf[0] = 0;
-		if (buf[0] == 0 && l_fn < PATH_MAX) { // 1) the current directory first
+		if (buf[0] == 0 && l_fn < K8_PATH_MAX) { // 1) the current directory first
 			if ((fp = fopen(*file, "r")) != 0) {
 				strcpy(buf, *file);
 				fclose(fp);
 			}
 		}
-		if (buf[0] == 0 && k + l_fn < PATH_MAX) { // 2) the script directory
+		if (buf[0] == 0 && k + l_fn < K8_PATH_MAX) { // 2) the script directory
 			strcpy(&abspath[k], *file);
 			if ((fp = fopen(abspath, "r")) != 0) {
 				strcpy(buf, abspath);
 				fclose(fp);
 			}
 		}
-		if (buf[0] == 0 && env_path && strlen(env_path) + l_fn < PATH_MAX) { // 3) a directory on K8_PATH. TODO: to allow multiple paths separated by ":"
+		if (buf[0] == 0 && env_path && strlen(env_path) + l_fn < K8_PATH_MAX) { // 3) a directory on K8_PATH. TODO: to allow multiple paths separated by ":"
 			strcpy(buf, env_path); strcat(buf, "/"); strcat(buf, *file);
 			if ((fp = fopen(buf, "r")) != 0) fclose(fp);
 		}
