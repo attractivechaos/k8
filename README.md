@@ -28,19 +28,19 @@ print(n_lines);
 
 ## Introduction
 
-K8 is a Javascript runtime built on top of Google's [V8 Javascript engine][v8].
+K8 is a JavaScript runtime built on top of Google's [V8 JavaScript engine][v8].
 It provides synchronous APIs for plain file writing and gzip'd file reading. It
 also parses the FASTA/FASTQ format used in Bioinformatics.
 
 ## Motivations
 
-Javascript is among the fastest scripting languages. It is essential for web
+JavaScript is among the fastest scripting languages. It is essential for web
 development but not often used for large-scale text processing or command-line
 utilities, in my opinion, due to the lack of sensible file I/O.  Current
-Javascript runtimes such as [Node.js][node] and [Deno][deno] focus on
+JavaScript runtimes such as [Node.js][node] and [Deno][deno] focus on
 [asynchronous I/O][aio] and whole-file reading. Even reading a file line by
 line, which is required to work with large files, becomes a cumbersome effort.
-K8 aims to solve this problem. With synchronous I/O APIs, Javascript is in fact
+K8 aims to solve this problem. With synchronous I/O APIs, JavaScript is in fact
 a powerful language for developing command-line tools.
 
 ## API Documentations
@@ -81,13 +81,13 @@ function warn(str1, str2)
 // exit
 function exit(code: number)
 
-// load a Javascript file and execute
+// load a JavaScript file and execute
 function load(fileName: string)
 ```
 
 ### The Bytes Object
 
-`Bytes` provides a byte array. **Not recommended** as Javascript has
+`Bytes` provides a byte array. **Not recommended** as JavaScript has
 [ArrayBuffer][arraybuffer] and [TypedArray][typedarray] now.
 
 ```typescript
@@ -99,6 +99,9 @@ new Bytes(len?: number)
 
 // Property: get/set the max capacity of the array
 .capacity: number
+
+// Property: get ArrayBuffer of the underlying data
+.buffer: ArrayBuffer
 
 // Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
 Bytes.prototype.destroy()

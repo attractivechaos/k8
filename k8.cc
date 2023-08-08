@@ -1,7 +1,7 @@
 /* The MIT License
 
-   Copyright (c) 2023 Dana-Farber Cancer Institute
-                 2012-2013, 2016 Attractive Chaos
+   Copyright (c) 2018- Dana-Farber Cancer Institute
+                 2011-2018 Broad Institute, Inc
 
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
