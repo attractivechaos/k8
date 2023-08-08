@@ -29,7 +29,7 @@ print(n_lines);
 
 ## Introduction
 
-K8 is a Javascript runtime built on top of Google's [V8 Javascript engine][1].
+K8 is a Javascript runtime built on top of Google's [V8 Javascript engine][v8].
 It provides synchronous APIs for plain file writing and gzip'd file reading. It
 also parses the FASTA/FASTQ format used in Bioinformatics.
 
@@ -47,6 +47,9 @@ a powerful language for developing command-line tools.
 ## API Documentations
 
 ### Functions
+
+Since v0.3.0, we recommend the following functions to read/write files.
+Class-based APIs are still provided for backward compatibility.
 
 ```typescript
 // open a plain or gzip'd file for reading or a plain file for writing.
@@ -85,7 +88,8 @@ function load(fileName: string)
 
 ### The Bytes Object
 
-`Bytes` provides a byte array. **Not recommended** as Javascript has ArrayBuffer and TypedArray now.
+`Bytes` provides a byte array. **Not recommended** as Javascript has
+[ArrayBuffer][arraybuffer] and [TypedArray][typedarray] now.
 
 ```typescript
 // Create an array of byte buffer of $len in size. 
@@ -115,8 +119,9 @@ Bytes.prototype.toString()
 
 ### The File Object
 
-`File` provides buffered file I/O. Effectively replaced by `k8_open()`
-functions. **Not recommended**.
+`File` provides buffered file I/O. It clashes with File in other runtimes and
+has been mostly replaced by `k8_open()` functions since v0.3.0. **Not
+recommended**.
 
 ```javascript
 new File(fileName?: string, mode?: string)
@@ -127,7 +132,6 @@ File.prototype.write(data: string|ArrayBuffer) :number
 File.prototype.close()
 ```
 
-[1]: http://code.google.com/p/v8/
 [3]: https://github.com/tlrobinson/narwhal
 [4]: http://silkjs.net/
 [5]: http://code.google.com/p/teajs/
@@ -135,9 +139,12 @@ File.prototype.close()
 [7]: http://nodejs.org/api/fs.html
 [8]: http://nodejs.org/api/stream.html
 [11]: https://sourceforge.net/projects/lh3/files/
+[v8]: https://v8.dev
 [gyp]: https://gyp.gsrc.io/
 [release]: https://github.com/attractivechaos/k8/releases
 [deno]: https://deno.land
 [node]: https://nodejs.org/
 [commjs]: https://en.wikipedia.org/wiki/CommonJS
 [aio]: https://en.wikipedia.org/wiki/Asynchronous_I/O
+[typedarray]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
+[arraybuffer]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
