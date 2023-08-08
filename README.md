@@ -4,9 +4,10 @@
 wget -O- link-to-be-added-later | tar -jxf -
 k8-0.3.0/k8-Linux -e 'print(Math.log(2))'
 
-# Compile from source code
+# Compile from source code. This requires to compile node.js first:
 wget -O- https://nodejs.org/dist/v18.17.0/node-v18.17.0.tar.gz | tar -zxf -
-cd node-v18.17.0
+cd node-v18.17.0 && ./configure && make -j16
+# Then compile k8
 git clone https://github.com/attractivechaos/k8
 cd k8 && make
 ```
