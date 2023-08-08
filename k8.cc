@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r97-dirty"
+#define K8_VERSION "1.0-r106-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -67,6 +67,8 @@
 			memset((ptr) + old_m, 0, ((__m) - old_m) * sizeof(type)); \
 		} \
 	} while (0)
+
+static char *k8_src_path = 0;
 
 /****************
  *** File I/O ***
@@ -405,21 +407,36 @@ static void k8_exit(const v8::FunctionCallbackInfo<v8::Value> &args)
 
 static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): Load and execute a JS file. It also searches ONE path in $K8_PATH
 {
-	char buf[1024], *path = getenv("K8_PATH");
+	char *env_path = getenv("K8_PATH");
+	char abspath[PATH_MAX+1], buf[PATH_MAX+1];
 	FILE *fp;
+	int32_t k;
+	realpath(k8_src_path, abspath);
+	for (k = strlen(abspath) - 1; k >= 0; --k)
+		if (abspath[k] == '/') break;
+	assert(k >= 0);
+	abspath[++k] = 0;
 	for (int i = 0; i < args.Length(); i++) {
 		v8::HandleScope handle_scope(args.GetIsolate());
 		v8::String::Utf8Value file(args.GetIsolate(), args[i]);
+		int32_t l_fn = strlen(*file);
 		buf[0] = 0;
-		if ((fp = fopen(*file, "r")) != 0) {
-			fclose(fp);
-			assert(strlen(*file) < 1023);
-			strcpy(buf, *file);
-		} else if (path) { // TODO: to allow multiple paths separated by ":"
-			assert(strlen(path) + strlen(*file) + 1 < 1023);
-			strcpy(buf, path); strcat(buf, "/"); strcat(buf, *file);
-			if ((fp = fopen(buf, "r")) == 0) buf[0] = 0;
-			else fclose(fp);
+		if (buf[0] == 0 && l_fn < PATH_MAX) { // 1) the current directory first
+			if ((fp = fopen(*file, "r")) != 0) {
+				strcpy(buf, *file);
+				fclose(fp);
+			}
+		}
+		if (buf[0] == 0 && k + l_fn < PATH_MAX) { // 2) the script directory
+			strcpy(&abspath[k], *file);
+			if ((fp = fopen(abspath, "r")) != 0) {
+				strcpy(buf, abspath);
+				fclose(fp);
+			}
+		}
+		if (buf[0] == 0 && env_path && strlen(env_path) + l_fn < PATH_MAX) { // 3) a directory on K8_PATH. TODO: to allow multiple paths separated by ":"
+			strcpy(buf, env_path); strcat(buf, "/"); strcat(buf, *file);
+			if ((fp = fopen(buf, "r")) != 0) fclose(fp);
 		}
 		if (buf[0] == 0) {
 			args.GetIsolate()->ThrowError("[load] fail to locate the file");
@@ -951,6 +968,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 	context->Global()->Set(context, name, args).FromJust();
 
 	// load and evaluate the source file
+	k8_src_path = argv[optind];
 	v8::Local<v8::String> file_name = v8::String::NewFromUtf8(isolate, argv[optind]).ToLocalChecked();
 	v8::Local<v8::String> source;
 	if (!k8_readfile(isolate, argv[optind]).ToLocal(&source)) {

@@ -1,5 +1,5 @@
-Release 0.3-r97 (7 August 2023)
--------------------------------
+Release 1.0-r106 (7 August 2023)
+--------------------------------
 
 The previous version of k8, v0.2.5, was built on top of v8-3.16.4 released on
 2013-01-11. This version updates v8 to v8-10.2.154.26 released on 2023-01-23,
@@ -14,42 +14,45 @@ functions to avoid clashes with the File classes in other JavaScript runtimes.
 
 New functions:
 
- * `k8_open()` for file opening
- * `k8_close()` for closing an opened file
- * `k8_getc()` for reading a byte
- * `k8_read()` for reading bytes
- * `k8_readline()` for reading a line
- * `k8_readfastx()` for reading a FASTX record
- * `k8_write()` for writing to a plain file
- * `k8_version()` for getting the k8 version
- * `Bytes.buffer` for getting ArrayBuffer
+ * `k8_open()`: open a file
+ * `k8_close()`: close an opened file
+ * `k8_getc()`: read a byte
+ * `k8_read()`: read bytes
+ * `k8_readline()`: read a line
+ * `k8_readfastx()`: read a FASTX record
+ * `k8_write()`: write to a plain file
+ * `k8_version()`: get the k8 version
+ * `Bytes.buffer`: get ArrayBuffer
+
+Improved:
+
+ * `load()`: search the script path
 
 Unchanged:
 
- * `print()` for printing to stdout
- * `warn()` for printing to stderr
- * `exit()` for exiting the entire program
- * `load()` for loading an external source file
+ * `print()`: print to stdout
+ * `warn()`: print to stderr
+ * `exit()`: exit the entire program
 
 Unchanged but not recommended:
 
- * `Bytes.length` for getting/setting Bytes length
- * `Bytes.capacity` for getting/setting Bytes capacity
- * `new File()` for file opening
- * `File.prototype.close()` for closing an opened file
- * `File.prototype.read()` for reading a byte or bytes
- * `File.prototype.readline()` for reading a line
- * `File.prototype.write()` for closing an opened file
+ * `Bytes.length`: get/set Bytes length
+ * `Bytes.capacity`: get/set Bytes capacity
+ * `new File()`: open a file
+ * `File.prototype.close()`: close the file handler
+ * `File.prototype.read()`: read a byte or bytes
+ * `File.prototype.readline()`: read a line
+ * `File.prototype.write()`: write to a plain file
 
 Changed functions (BREAKING):
 
- * `new Bytes()`: Bytes only supports `uint8_t` now
- * `Bytes.prototype.set()`: Bytes only supports `uint8_t`
+ * `new Bytes()` - Bytes only supports `uint8_t` now
+ * `Bytes.prototype.set()` - Bytes only supports `uint8_t`
 
 Removed functions (BREAKING):
 
- * The `Map` object as it is a JavaScript object now
- * `Bytes.prototype.cast()`: Bytes only supports `uint8_t`
- * `Bytes[]`: not possible to implement. Use `Bytes.buffer` as a partial remedy
+ * `Map` - it is a JavaScript object now
+ * `Bytes.prototype.cast()` - Bytes only supports `uint8_t`
+ * `Bytes[]` - not possible to implement. Use `Bytes.buffer` as a partial remedy
 
 (0.3: 24 June 2023, r237)
