@@ -14,13 +14,6 @@ functions to avoid clashes with the File classes in other JavaScript runtimes.
 
 New functions:
 
- * `k8_open()`: open a file
- * `k8_close()`: close an opened file
- * `k8_getc()`: read a byte
- * `k8_read()`: read bytes
- * `k8_readline()`: read a line
- * `k8_readfastx()`: read a FASTX record
- * `k8_write()`: write to a plain file
  * `k8_version()`: get the k8 version
  * `Bytes.buffer`: get ArrayBuffer
 
@@ -32,10 +25,7 @@ Unchanged:
 
  * `print()`: print to stdout
  * `warn()`: print to stderr
- * `exit()`: exit the entire program
-
-Unchanged but not recommended:
-
+ * `exit()`: exit
  * `Bytes.length`: get/set Bytes length
  * `Bytes.capacity`: get/set Bytes capacity
  * `new File()`: open a file
@@ -51,7 +41,7 @@ Changed functions (BREAKING):
 
 Removed functions (BREAKING):
 
- * `Map` - it is a JavaScript object now
+ * `Map` - JavaScript has `Map` and works better
  * `Bytes.prototype.cast()` - Bytes only supports `uint8_t`
  * `Bytes[]` - not possible to implement. Use `Bytes.buffer` as a partial remedy
 

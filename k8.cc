@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r110-dirty"
+#define K8_VERSION "0.3.0-r111-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -101,12 +101,15 @@ typedef struct {
 #define ks_err(ks) ((ks)->en < 0)
 #define ks_eof(ks) ((ks)->is_eof && (ks)->st >= (ks)->en)
 
-static k8_file_t *ks_open(const char *fn, const char *mode)
+static k8_file_t *ks_open(int fd, const char *fn, const char *mode)
 {
 	gzFile fp = 0;
 	FILE *fpw = 0;
-	int32_t write_file = (mode && strchr(mode, 'w') && strchr(mode, 'r') == 0);
-	if (fn) {
+	int32_t write_file = (mode && (strchr(mode, 'w') || strchr(mode, 'a')) && strchr(mode, 'r') == 0);
+	if (fd >= 0) {
+		if (write_file) fpw = fdopen(fd, mode);
+		else fp = gzdopen(fd, "r");
+	} else if (fn) {
 		if (write_file) fpw = strcmp(fn, "-")? fopen(fn, mode) : stdout;
 		else fp = strcmp(fn, "-")? gzopen(fn, "r") : gzdopen(0, "r");
 	} else {
@@ -317,7 +320,7 @@ static bool k8_execute(v8::Isolate* isolate, v8::Local<v8::String> source, v8::L
 v8::MaybeLocal<v8::String> k8_readfile(v8::Isolate* isolate, const char *name) // Read an entire file. Adapted from v8/shell.cc
 {
 	kstring_t str = {0,0,0};
-	k8_file_t *ks = ks_open(name, 0);
+	k8_file_t *ks = ks_open(-1, name, 0);
 	if (ks == 0) {
 		fprintf(stderr, "ERROR: fail to open file '%s'.\n", name);
 		return v8::Handle<v8::String>();
@@ -560,15 +563,24 @@ static void k8_file_open(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::Isolate *isolate = args.GetIsolate();
 	v8::HandleScope handle_scope(isolate);
 	k8_file_t *ks = 0;
-	if (args.Length() >= 2) {
-		v8::String::Utf8Value fn(isolate, args[0]);
+	int fd = args.Length() >= 1 && args[0]->IsUint32()? args[0]->Int32Value(isolate->GetCurrentContext()).FromMaybe(-1) : -1;
+	if (args.Length() >= 2) { // File(fn, mode) or File(fd, mode)
 		v8::String::Utf8Value mode(isolate, args[1]);
-		ks = ks_open(*fn, *mode);
-	} else if (args.Length() == 1) {
-		v8::String::Utf8Value fn(isolate, args[0]);
-		ks = ks_open(*fn, 0);
-	} else { // args.Length() == 0
-		ks = ks_open(0, 0);
+		if (fd >= 0) { // File(fd, mode)
+			ks = ks_open(fd, 0, *mode);
+		} else { // File(fn, mode)
+			v8::String::Utf8Value fn(isolate, args[0]);
+			ks = ks_open(-1, *fn, *mode);
+		}
+	} else if (args.Length() == 1) { // File(fn) or File(fd)
+		if (fd >= 0) {
+			ks = ks_open(fd, 0, 0);
+		} else {
+			v8::String::Utf8Value fn(isolate, args[0]);
+			ks = ks_open(-1, *fn, 0);
+		}
+	} else { // File()
+		ks = ks_open(0, 0, 0); // open stdin for reading
 	}
 	if (ks == 0) { // error
 		isolate->ThrowError("k8_open: failed to open file");

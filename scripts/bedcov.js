@@ -8,18 +8,19 @@ function main(args)
 		print("Usage: bedcov.js <loaded.bed> <streamed.bed>");
 		return;
 	}
-	let bed = {}, line, fp = k8_open(args[0]);
-	while ((line = k8_readline(fp)) != null) {
-		const t = line.split("\t", 3);
+	let bed = {}, file, buf = new Bytes();
+	file = new File(args[0]);
+	while (file.readline(buf) >= 0) {
+		const t = buf.toString().split("\t", 3);
 		if (bed[t[0]] == null) bed[t[0]] = [];
 		bed[t[0]].push([parseInt(t[1]), parseInt(t[2]), 0]);
 	}
 	for (const ctg in bed) iit_index(bed[ctg]);
-	k8_close(fp);
+	file.close();
 
-	fp = k8_open(args[1]);
-	while ((line = k8_readline(fp)) != null) {
-		const t = line.split("\t", 3);
+	file = new File(args[1]);
+	while (file.readline(buf) >= 0) {
+		const t = buf.toString().split("\t", 3);
 		if (bed[t[0]] == null) {
 			print(t[0], t[1], t[2], 0, 0);
 		} else {
@@ -38,7 +39,8 @@ function main(args)
 			print(t[0], t[1], t[2], a.length, cov);
 		}
 	}
-	k8_close(fp);
+	file.close();
+	buf.destroy();
 }
 
 main(arguments);

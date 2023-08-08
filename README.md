@@ -47,41 +47,16 @@ a powerful language for developing command-line tools.
 
 ### Functions
 
-Since v0.3.0, we recommend the following functions to read/write files.
-Class-based APIs are still provided for backward compatibility.
-
 ```typescript
-// open a plain or gzip'd file for reading or a plain file for writing.
-// $encoding affects the return value of k8_read() and k8_readline()
-// $encoding=1 (default) for Latin-1 string, 2 for UTF8 string and 0 for ArrayBuffer
-function k8_open(fileName?: string, mode?: string, encoding?: number) :object
+// Print to stdout (print) or stderr (warn). TAB delimited if multiple arguments.
+function print(data: any)
+function warn(data: any)
 
-// close an opened file and free internal buffers
-function k8_close(fp: object)
-
-// read a byte
-function k8_getc(fp: object) :number
-
-// read bytes. Return type determined by $encoding on k8_open()
-function k8_read(fp: object, len: number) :string|ArrayBuffer
-
-// read a line. $delimiter=0 for spaces, 1 for TAB and 2 for line
-function k8_readline(fp: object, delimiter?: number|string) :string|ArrayBuffeer
-
-// read a FASTA/FASTQ record. Return a [name,seq,qual,comment] array
-function k8_readfastx(fp: object) :Array
-
-// write $data and return the number of bytes written
-function k8_write(fp: object, data: string|ArrayBuffer) :number
-
-// print to stdout (print) or stderr (warn). TAB delimited
-function print(str1, str2)
-function warn(str1, str2)
-
-// exit
+// Exit
 function exit(code: number)
 
-// load a JavaScript file and execute
+// Load a JavaScript file and execute. It searches the working directory, the
+// script directory and then the K8_PATH environment variable in order.
 function load(fileName: string)
 ```
 
@@ -92,7 +67,7 @@ function load(fileName: string)
 
 ```typescript
 // Create an array of byte buffer of $len in size. 
-new Bytes(len?: number)
+new Bytes(len?: number = 0)
 
 // Property: get/set length of the array
 .length: number
@@ -117,16 +92,28 @@ Bytes.prototype.toString()
 
 ### The File Object
 
-`File` provides buffered file I/O. It clashes with File in other runtimes and
-has been mostly replaced by `k8_open()` functions since v0.3.0. **Not
-recommended**.
+`File` provides buffered file I/O.
 
 ```javascript
-new File(fileName?: string, mode?: string)
+// Open a plain or gzip'd file for reading or a plain file for writing. $file
+// is file descriptor if it is an integer or file name if string. Each File
+// object can only be read or only be written.
+new File(file?: string|number = 0, mode?: string = "r")
+
+// Read a byte
 File.prototype.read() :number
+
+// Read $len bytes into $buf at $offset. Return the number of bytes read
 File.prototype.read(buf: Bytes, offset :number, len :number) :number
-File.prototype.readline(bytes, sep?, offset?) :number
+
+// Read a line or a token to $buf at $offset. $sep=0 for SPACE, 1 for TAB and 2
+// for newline. If $sep is a string, only the first character is considered.
+File.prototype.readline(buf: Bytes, sep :number|string = 2, offset :number = 0) :number
+
+// Write data
 File.prototype.write(data: string|ArrayBuffer) :number
+
+// Close a file
 File.prototype.close()
 ```
 
