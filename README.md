@@ -18,8 +18,7 @@ if (arguments.length == 0) {
 	exit(1);
 }
 let fp = k8_open(arguments[0]);
-if (fp == null)
-	throw Error(`Failed to open file "${arguments[0]}"`);
+if (fp == null) throw Error(`Failed to open file "${arguments[0]}"`);
 let line, n_lines = 0;
 while ((line = k8_readline(fp)) != null)
 	++n_lines;
@@ -106,12 +105,8 @@ Bytes.prototype.destroy()
 
 // Replace the byte array starting from $offset to $data, where $data can be a number,
 // a string, an array or Bytes. The size of the array is modified if the new array
-// is larger. Return the number of modified bytes. If only one byte needs to be
-// changed, using the [] operator gives better performance.
-Bytes.prototype.set(data: number|string|Array, offset: number) :number
-
-// Append $data to the byte array
-Bytes.prototype.set(data: number|string|Array) :number
+// is larger. Return the number of modified bytes.
+Bytes.prototype.set(data: number|string|Array, offset?: number) :number
 
 // Convert the byte array to string
 Bytes.prototype.toString()
@@ -127,7 +122,7 @@ recommended**.
 new File(fileName?: string, mode?: string)
 File.prototype.read() :number
 File.prototype.read(buf: Bytes, offset :number, len :number) :number
-File.prototype.readline(bytes, sep, offset) :number
+File.prototype.readline(bytes, sep?, offset?) :number
 File.prototype.write(data: string|ArrayBuffer) :number
 File.prototype.close()
 ```
