@@ -1,3 +1,5 @@
+#!/usr/bin/env k8
+
 function sd_genmat() {
 	let i, j, r, c2, C = [], R = [];
 	for (i = r = 0; i < 9; ++i)

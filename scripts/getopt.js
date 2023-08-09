@@ -1,3 +1,5 @@
+#!/usr/bin/env k8
+
 load("k8.js");
 
 function main(args) {
