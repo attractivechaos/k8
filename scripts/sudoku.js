@@ -90,7 +90,6 @@ class SudokuSolver {
 	}
 }
 
-
 function main(args) {
 	if (args.length == 0) {
 		warn("Usage: k8 sudoku.js <hard20.txt>");
