@@ -28,7 +28,7 @@ print(n);
 
 ## Introduction
 
-K8 is a JavaScript runtime built on top of Google's [V8 JavaScript engine][v8].
+K8 is a JavaScript runtime built on top of Google's [v8 JavaScript engine][v8].
 It provides synchronous APIs for plain file writing and gzip'd file reading. It
 also parses the FASTA/FASTQ format used in Bioinformatics.
 
@@ -62,8 +62,7 @@ function load(fileName: string)
 
 ### The Bytes Object
 
-`Bytes` provides a byte array. **Not recommended** as JavaScript has
-[ArrayBuffer][arraybuffer] and [TypedArray][typedarray] now.
+`Bytes` provides a resizable byte array.
 
 ```typescript
 // Create an array of byte buffer of $len in size. 
@@ -75,7 +74,7 @@ new Bytes(len?: number = 0)
 // Property: get/set the max capacity of the array
 .capacity: number
 
-// Property: get ArrayBuffer of the underlying data
+// Property: get ArrayBuffer of the underlying data, not allocated from v8
 .buffer: ArrayBuffer
 
 // Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
@@ -84,7 +83,7 @@ Bytes.prototype.destroy()
 // Replace the byte array starting from $offset to $data, where $data can be a number,
 // a string, an array or Bytes. The size of the array is modified if the new array
 // is larger. Return the number of modified bytes.
-Bytes.prototype.set(data: number|string|Array, offset?: number) :number
+Bytes.prototype.set(data: number|string|Array|ArrayBuffer, offset?: number) :number
 
 // Convert the byte array to string
 Bytes.prototype.toString()
@@ -97,7 +96,7 @@ Bytes.prototype.toString()
 ```javascript
 // Open a plain or gzip'd file for reading or a plain file for writing. $file
 // is file descriptor if it is an integer or file name if string. Each File
-// object can only be read or only be written.
+// object can only be read or only be written, not mixed
 new File(file?: string|number = 0, mode?: string = "r")
 
 // Read a byte and return it
@@ -108,7 +107,7 @@ File.prototype.read(buf: Bytes, offset: number, len: number) :number
 
 // Read a line or a token to $buf at $offset. $sep=0 for SPACE, 1 for TAB and 2
 // for newline. If $sep is a string, only the first character is considered.
-// Return the delimiter if non-negative, -1 upon EOF or <-1 for errors
+// Return the delimiter if non-negative, -1 upon EOF, or <-1 for errors
 File.prototype.readline(buf: Bytes, sep?: number|string = 2, offset?: number = 0) :number
 
 // Write data
