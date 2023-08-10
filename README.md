@@ -14,7 +14,7 @@ cd k8 && make
 
 The following example counts the number of lines:
 ```javascript
-if (arguments.length == 0) {
+if (arguments.length == 0) { // test command-line arguments
 	warn("Usage: k8 lc.js <in.txt>");
 	exit(1);
 }
@@ -29,8 +29,8 @@ print(n);
 ## Introduction
 
 K8 is a JavaScript runtime built on top of Google's [v8 JavaScript engine][v8].
-It provides synchronous APIs for plain file writing and gzip'd file reading. It
-also parses the FASTA/FASTQ format used in Bioinformatics.
+It provides a resizable binary buffer and synchronous APIs for plain file
+writing and gzip'd file reading.
 
 ## Motivations
 
@@ -40,14 +40,14 @@ utilities, in my opinion, due to the lack of sensible file I/O.  Current
 JavaScript runtimes such as [Node.js][node] and [Deno][deno] focus on
 [asynchronous I/O][aio] and whole-file reading. Even reading a file line by
 line, which is required to work with large files, becomes a cumbersome effort.
-K8 aims to solve this problem. With synchronous I/O APIs, JavaScript is in fact
-a powerful language for developing command-line tools.
+K8 aims to solve this problem. With synchronous I/O APIs, JavaScript can be a
+powerful language for developing command-line tools.
 
 ## API Documentations
 
 ### Functions
 
-```typescript
+```javascript
 // Print to stdout (print) or stderr (warn). TAB delimited if multiple arguments.
 function print(data: any)
 function warn(data: any)
@@ -64,7 +64,7 @@ function load(fileName: string)
 
 `Bytes` provides a resizable byte array.
 
-```typescript
+```javascript
 // Create an array of byte buffer of $len in size. 
 new Bytes(len?: number = 0)
 
@@ -77,7 +77,7 @@ new Bytes(len?: number = 0)
 // Property: get ArrayBuffer of the underlying data, not allocated from v8
 .buffer: ArrayBuffer
 
-// Deallocate the array. This is necessary as the memory is not managed by the V8 GC.
+// Deallocate the array. This is necessary as the memory is not managed by the v8 GC.
 Bytes.prototype.destroy()
 
 // Replace the byte array starting from $offset to $data, where $data can be a number,

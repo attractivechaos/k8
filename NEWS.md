@@ -1,5 +1,5 @@
-Release 1.0-r106 (7 August 2023)
---------------------------------
+Release 1.0-r119 (10 August 2023)
+---------------------------------
 
 The previous version of k8, v0.2.5, was built on top of v8-3.16.4 released on
 2013-01-11. This version updates v8 to v8-10.2.154.26 released on 2023-01-23,
@@ -20,11 +20,11 @@ New functions:
 Improved:
 
  * `load()`: search the script path
+ * `print()`: print to stdout. Support ArrayBuffer. Faster for Bytes.
+ * `warn()`: print to stderr. Support ArrayBuffer. Faster for Bytes.
 
-Unchanged:
+Mostly unchanged:
 
- * `print()`: print to stdout
- * `warn()`: print to stderr
  * `exit()`: exit
  * `Bytes.length`: get/set Bytes length
  * `Bytes.capacity`: get/set Bytes capacity
@@ -45,4 +45,4 @@ Removed functions (BREAKING):
  * `Bytes.prototype.cast()` - Bytes only supports `uint8_t`
  * `Bytes[]` - not possible to implement. Use `Bytes.buffer` as a partial remedy
 
-(0.3: 24 June 2023, r237)
+(0.3: 10 August 2023, r119)
