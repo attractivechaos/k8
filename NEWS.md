@@ -1,4 +1,4 @@
-Release 1.0-r121 (10 August 2023)
+Release 1.0-r124 (10 August 2023)
 ---------------------------------
 
 The previous version of k8, v0.2.5, was built on top of v8-3.16.4 released on
@@ -45,4 +45,4 @@ Removed functions (BREAKING):
  * `Bytes.prototype.cast()` - Bytes only supports `uint8_t`
  * `Bytes[]` - not possible to implement. Use `Bytes.buffer` as a partial remedy
 
-(1.0: 10 August 2023, r119)
+(1.0: 10 August 2023, r124)

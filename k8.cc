@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.0-r121"
+#define K8_VERSION "1.0-r124"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -358,20 +358,22 @@ static void k8_write_string(FILE *fp, const v8::FunctionCallbackInfo<v8::Value> 
 	v8::HandleScope handle_scope(args.GetIsolate());
 	if (args[i]->IsString()) {
 		int64_t len = args[i].As<v8::String>()->Length();
-		K8_GROW(uint8_t, buf->s, len-1, buf->m);
-		args[i].As<v8::String>()->WriteOneByte(args.GetIsolate(), buf->s);
-		fwrite(buf->s, 1, len, fp);
+		if (len > 0) {
+			K8_GROW(uint8_t, buf->s, len, buf->m);
+			args[i].As<v8::String>()->WriteOneByte(args.GetIsolate(), buf->s);
+			fwrite(buf->s, 1, len, fp);
+		}
 		return;
 	} else if (args[i]->IsArrayBuffer()) {
 		void *data = args[i].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
 		int64_t len = args[i].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
-		fwrite(data, 1, len, fp);
+		if (len > 0) fwrite(data, 1, len, fp);
 		return;
 	} else if (args[i]->IsObject()) {
 		if (args[i].As<v8::Object>()->InternalFieldCount() > 0) {
 			k8_bytes_t *a = (k8_bytes_t*)args[i].As<v8::Object>()->GetAlignedPointerFromInternalField(0);
 			if (a && a->magic == K8_BYTES_MAGIC) {
-				fwrite(a->buf.s, 1, a->buf.l, fp);
+				if (a->buf.l > 0) fwrite(a->buf.s, 1, a->buf.l, fp);
 				return;
 			}
 		}
@@ -706,14 +708,14 @@ static void k8_file_write(const v8::FunctionCallbackInfo<v8::Value> &args)
 		void *data = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
 		int64_t len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
 		assert(len >= 0 && len < INT32_MAX);
-		fwrite(data, 1, len, ks->fpw);
+		if (len > 0) fwrite(data, 1, len, ks->fpw);
 		args.GetReturnValue().Set((int32_t)len);
 	} else if (args[0]->IsString()) {
 		int32_t len = args[0].As<v8::String>()->Length();
 		uint8_t *buf;
 		buf = K8_MALLOC(uint8_t, len);
 		args[0].As<v8::String>()->WriteOneByte(args.GetIsolate(), buf);
-		fwrite(buf, 1, len, ks->fpw);
+		if (len > 0) fwrite(buf, 1, len, ks->fpw);
 		free(buf);
 		args.GetReturnValue().Set(len);
 	}
