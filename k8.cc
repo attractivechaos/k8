@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "0.3.0-r119-dirty"
+#define K8_VERSION "1.0-r121"
 
 #include <stdlib.h>
 #include <stdint.h>

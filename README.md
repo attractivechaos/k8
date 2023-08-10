@@ -1,8 +1,8 @@
 ## Getting Started
 ```sh
 # Download precomiplied binaries
-wget -O- link-to-be-added-later | tar -jxf -
-k8-0.3.0/k8-Linux -e 'print(Math.log(2))'
+wget -O- https://github.com/attractivechaos/k8/releases/download/1.0/k8-1.0.tar.bz2 | tar -jxf -
+k8-1.0/k8-x86_64-Linux -e 'print(Math.log(2))'
 
 # Compile from source code. This requires to compile node.js first:
 wget -O- https://nodejs.org/dist/v18.17.0/node-v18.17.0.tar.gz | tar -zxf -
