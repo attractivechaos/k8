@@ -1,0 +1,47 @@
+version: 2.1
+
+jobs:
+  build-aarch64:
+    
+    machine:
+      image: ubuntu-2204:current
+    resource_class: arm.large
+
+    steps:
+      - checkout
+
+      - run:
+          name: Install dependencies
+          command: |
+            sudo apt update
+            sudo apt-get install -y file tar wget make
+
+      - run:
+          name: Build K8 Linux ARM64 binary
+          environment:
+            NODE_VERSION: 18.18.1
+          command: |
+            # Hack CircleCI Ubuntu Docker image to link 'python' to 'python3'
+            echo -e '#!/usr/bin/env bash\n\nexport PYENV_ROOT="/opt/circleci/.pyenv"\nexec "/opt/circleci/.pyenv/libexec/pyenv" exec "python3" "$@"' > ~/bin/python
+            chmod +x ~/bin/python
+            PATH=~/bin:$PATH
+            python --version
+
+            wget -O- https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.gz | tar -zxf -
+            pushd node-v${NODE_VERSION}
+            ./configure
+            make -j3
+            popd
+
+            # Then compile k8
+            NODE_SRC=node-v${NODE_VERSION} make -j
+            file k8 | grep aarch64
+            mv k8 k8-aarch64-Linux
+      
+      - store_artifacts:
+          path: k8-aarch64-Linux
+
+workflows:
+  build:
+    jobs:
+      - build-aarch64

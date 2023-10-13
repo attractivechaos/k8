@@ -1,5 +1,5 @@
 CXXFLAGS=-std=c++17 -g -O3 -Wall
-NODE_SRC=..
+NODE_SRC?=..
 EXE=k8
 LIB_COMMON=-lv8_snapshot -lv8_libplatform -lv8_base_without_compiler -lv8_libbase -lv8_zlib -lv8_compiler -licutools -lm -ldl -lz
 LIB_LINUX=-L$(NODE_SRC)/out/Release -L$(NODE_SRC)/out/Release/obj.target/tools/v8_gypfiles -L$(NODE_SRC)/out/Release/obj.target/tools/icu \
