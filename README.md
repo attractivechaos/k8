@@ -1,12 +1,12 @@
 ## Getting Started
 ```sh
 # Download precomiplied binaries
-wget -O- https://github.com/attractivechaos/k8/releases/download/1.0/k8-1.0.tar.bz2 | tar -jxf -
-k8-1.0/k8-x86_64-Linux -e 'print(Math.log(2))'
+wget -O- https://github.com/attractivechaos/k8/releases/download/v1.1/k8-1.1.tar.bz2 | tar -jxf -
+k8-1.1/k8-x86_64-Linux -e 'print(Math.log(2))'
 
 # Compile from source code. This requires to compile node.js first:
-wget -O- https://nodejs.org/dist/v18.17.0/node-v18.17.0.tar.gz | tar -zxf -
-cd node-v18.17.0 && ./configure && make -j16
+wget -O- https://nodejs.org/dist/v18.19.1/node-v18.19.1.tar.gz | tar -zxf -
+cd node-v18.19.1 && ./configure && make -j16
 # Then compile k8
 git clone https://github.com/attractivechaos/k8
 cd k8 && make
@@ -42,6 +42,16 @@ JavaScript runtimes such as [Node.js][node] and [Deno][deno] focus on
 line, which is required to work with large files, becomes a cumbersome effort.
 K8 aims to solve this problem. With synchronous I/O APIs, JavaScript can be a
 powerful language for developing command-line tools.
+
+## Installation
+
+It is recommended to download precompiled binaries. If you want to compile k8,
+you need to compile Node.js which bundles v8 and provides a more convenient way
+build v8. As the v8 APIs are fast changing, both Node.js and k8 only work with
+specific versions of v8. The k8-1.x branch is known to work with node-18.x but
+not 19.x or higher. It is also worth noting that node-18.20.x upgraded
+[c-ares][c-ares] which is now incompatible with older glibc. Node-18.19.1 is
+the most recent version that can be compiled on CentOS 7.
 
 ## API Documentations
 
@@ -133,3 +143,4 @@ File.prototype.close()
 [aio]: https://en.wikipedia.org/wiki/Asynchronous_I/O
 [typedarray]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
 [arraybuffer]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
+[c-ares]: https://c-ares.org

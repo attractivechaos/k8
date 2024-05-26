@@ -19,7 +19,7 @@ jobs:
       - run:
           name: Build K8 Linux ARM64 binary
           environment:
-            NODE_VERSION: 18.18.1
+            NODE_VERSION: 18.19.1
           command: |
             # Hack CircleCI Ubuntu Docker image to link 'python' to 'python3'
             echo -e '#!/usr/bin/env bash\n\nexport PYENV_ROOT="/opt/circleci/.pyenv"\nexec "/opt/circleci/.pyenv/libexec/pyenv" exec "python3" "$@"' > ~/bin/python

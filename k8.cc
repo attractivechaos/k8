@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.0-r125-dirty"
+#define K8_VERSION "1.1-r129"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -846,6 +846,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 		fprintf(stderr, "  -E STR      execute STR and print results\n");
 		fprintf(stderr, "  -m INT      v8 max size of the old space (in Mbytes) [16384]\n");
 		fprintf(stderr, "  -v          print version number\n");
+		fprintf(stderr, "  --help      show v8 command-line options\n");
 		return 0;
 	}
 

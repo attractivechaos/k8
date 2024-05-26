@@ -1,16 +1,25 @@
+Release 1.1-r129 (26 May 2024)
+------------------------------
+
+This version sets v8's default `max_old_space_size` to 16 GB and also adds
+option `-m` as a more convenient way to change this parameter.
+
+(1.1: 26 May 2024, r129)
+
+
+
 Release 1.0-r124 (10 August 2023)
 ---------------------------------
 
 The previous version of k8, v0.2.5, was built on top of v8-3.16.4 released on
 2013-01-11. This version updates v8 to v8-10.2.154.26 released on 2023-01-23,
-ten years later. It brings ES6 features including but limited to the "let"
+ten years later. It brings ES6 features including but not limited to the "let"
 keyword to define local variables, Java-like classes and back-tick strings.
 
 Due to the lack of the SetIndexedPropertiesToExternalArrayData() API in v8, it
 is not possible to keep full backward compatibility with older k8 versions.
-Nonetheless, we have tried to retain commonly used methods such that the
-several popular k8 scripts can mostly work. We also introduced new file I/O
-functions to avoid clashes with the File classes in other JavaScript runtimes.
+Nonetheless, we have tried to retain commonly used methods such that several
+popular k8 scripts can mostly work.
 
 New functions:
 
