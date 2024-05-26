@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.0-r124"
+#define K8_VERSION "1.0-r125-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -821,7 +821,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 {
 	// parse command-line options
 	int c;
-	while ((c = getopt(argc, argv, "e:E:v")) >= 0) {
+	while ((c = getopt(argc, argv, "e:E:vM:m:")) >= 0) {
 		if (c == 'e' || c == 'E') { // execute a string
 			v8::Local<v8::String> file_name = v8::String::NewFromUtf8Literal(isolate, "unnamed");
 			v8::Local<v8::String> source;
@@ -833,6 +833,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 		} else if (c == 'v') {
 			printf("v8: %s\nk8: %s\n", v8::V8::GetVersion(), K8_VERSION);
 			return 0;
+		} else if (c == 'm' || c == 'M') { // do nothing as this has been parsed in k8_set_mem
 		} else {
 			fprintf(stderr, "ERROR: unrecognized option\n");
 			return 1;
@@ -843,6 +844,7 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -e STR      execute STR\n");
 		fprintf(stderr, "  -E STR      execute STR and print results\n");
+		fprintf(stderr, "  -m INT      v8 max size of the old space (in Mbytes) [16384]\n");
 		fprintf(stderr, "  -v          print version number\n");
 		return 0;
 	}
@@ -867,9 +869,25 @@ static int k8_main(v8::Isolate *isolate, v8::Platform *platform, v8::Local<v8::C
 	return success? 0 : 1;
 }
 
-int main(int argc, char* argv[])
+void k8_set_mem(int argc, char *argv[])
+{
+	int c;
+	char buf[64], *ptr_size = 0;
+	while ((c = getopt(argc, argv, "ve:E:M:m:")) >= 0)
+		if (c == 'M' || c == 'm') ptr_size = optarg;
+	optreset = optind = opterr = 1;
+	if (ptr_size && strlen(ptr_size) > 40) {
+		fprintf(stderr, "ERROR: failed to set max_old_space_size\n");
+		return;
+	}
+	strcat(strcpy(buf, "--max_old_space_size="), ptr_size? ptr_size : "16384");
+	v8::V8::SetFlagsFromString(buf, strlen(buf));
+}
+
+int main(int argc, char *argv[])
 {
 	int ret = 0;
+	k8_set_mem(argc, argv);
 	v8::V8::InitializeICUDefaultLocation(argv[0]);
 	v8::V8::InitializeExternalStartupData(argv[0]);
 	std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
@@ -884,7 +902,7 @@ int main(int argc, char* argv[])
 		v8::HandleScope handle_scope(isolate);
 		v8::Local<v8::Context> context = k8_create_shell_context(isolate);
 		if (context.IsEmpty()) {
-			fprintf(stderr, "Error creating context\n");
+			fprintf(stderr, "ERROR: failed to create context\n");
 			return 1;
 		}
 		v8::Context::Scope context_scope(context);

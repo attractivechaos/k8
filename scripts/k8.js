@@ -165,3 +165,17 @@ Fastx.prototype.read = function() {
 	if (this.q.length != size) return -2; // error: qual string is of a different length
 	return size;
 }
+
+/********************
+ * Simpler File I/O *
+ ********************/
+
+function* k8_readline(fn) {
+	let buf = new Bytes();
+	let file = new File(fn);
+	while (file.readline(buf) >= 0) {
+		yield buf.toString();
+	}
+	file.close();
+	buf.destroy();
+}
