@@ -45,7 +45,8 @@ powerful language for developing command-line tools.
 
 ## Installation
 
-It is recommended to download precompiled binaries. If you want to compile k8,
+It is recommended to download [precompiled binaries][release]
+(also available [from Zenodo][zenodo]). If you want to compile k8,
 you need to compile Node.js which bundles v8 and provides a more convenient way
 build v8. As the v8 APIs are fast changing, both Node.js and k8 only work with
 specific versions of v8. The k8-1.x branch is known to work with node-18.x but
@@ -144,3 +145,4 @@ File.prototype.close()
 [typedarray]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
 [arraybuffer]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
 [c-ares]: https://c-ares.org
+[zenodo]: https://zenodo.org/records/8245119
