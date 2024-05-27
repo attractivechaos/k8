@@ -1,8 +1,8 @@
 ## Getting Started
 ```sh
 # Download precomiplied binaries
-wget -O- https://github.com/attractivechaos/k8/releases/download/v1.1/k8-1.1.tar.bz2 | tar -jxf -
-k8-1.1/k8-x86_64-Linux -e 'print(Math.log(2))'
+wget -O- https://github.com/attractivechaos/k8/releases/download/v1.2/k8-1.2.tar.bz2 | tar -jxf -
+k8-1.2/k8-x86_64-Linux -e 'print(Math.log(2))'
 
 # Compile from source code. This requires to compile node.js first:
 wget -O- https://nodejs.org/dist/v18.19.1/node-v18.19.1.tar.gz | tar -zxf -
@@ -87,7 +87,7 @@ function k8_revcomp(seq: string): string
 function k8_revcomp(seq: ArrayBuffer|Bytes)
 
 // Get version string
-function k8_version()
+function k8_version(): string
 ```
 
 ### The Bytes Object
