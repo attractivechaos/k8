@@ -80,6 +80,12 @@ function decode(buf: ArrayBuffer|Bytes, enc?: string): string
 // Encode $str into an ArrayBuffer
 function encode(str: string, enc?: string): ArrayBuffer
 
+// Reverse complement a DNA sequence in string
+function revcomp(seq: string): string
+
+// Reverse complement a DNA sequence in place
+function revcomp(seq: ArrayBuffer|Bytes)
+
 // Get version string
 function k8_version()
 ```

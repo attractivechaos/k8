@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r135-dirty"
+#define K8_VERSION "1.1-r136-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -553,6 +553,7 @@ static void k8_revcomp(const v8::FunctionCallbackInfo<v8::Value> &args)
 	v8::HandleScope handle_scope(args.GetIsolate());
 	uint8_t *seq = 0;
 	int64_t len = 0;
+	int32_t is_str = 0;
 	if (args[0]->IsArrayBuffer())  {
 		seq = (uint8_t*)args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
 		len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
@@ -562,6 +563,11 @@ static void k8_revcomp(const v8::FunctionCallbackInfo<v8::Value> &args)
 			if (a && a->magic == K8_BYTES_MAGIC)
 				seq = a->buf.s, len = a->buf.l;
 		}
+	} else if (args[0]->IsString()) {
+		is_str = 1;
+		len = args[0].As<v8::String>()->Length();
+		seq = (uint8_t*)calloc(len + 1, 1);
+		args[0].As<v8::String>()->WriteOneByte(args.GetIsolate(), seq);
 	}
 	if (seq == 0) return;
 	for (int64_t i = 0; i < len>>1; ++i) {
@@ -570,6 +576,12 @@ static void k8_revcomp(const v8::FunctionCallbackInfo<v8::Value> &args)
 		seq[i] = tmp < 128? k8_comp_tab[tmp] : tmp;
 	}
 	if (len & 1) seq[len>>1] = seq[len>>1] < 128? k8_comp_tab[seq[len>>1]] : seq[len>>1];
+	if (is_str) {
+		v8::Local<v8::String> str;
+		if (v8::String::NewFromOneByte(args.GetIsolate(), seq, v8::NewStringType::kNormal, len).ToLocal(&str))
+			args.GetReturnValue().Set(str);
+		free(seq);
+	}
 }
 
 /***********************
