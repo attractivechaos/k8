@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r129"
+#define K8_VERSION "1.1-r131-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -692,6 +692,7 @@ static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 		uint32_t len = args[2]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
 		K8_GROW(uint8_t, a->buf.s, off + len - 1, a->buf.m);
 		int64_t ret = ks_read(ks, &a->buf.s[off], len);
+		if (a->buf.l < off + ret) a->buf.l = off + ret;
 		args.GetReturnValue().Set((int32_t)ret);
 	}
 }
