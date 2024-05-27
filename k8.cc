@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r136-dirty"
+#define K8_VERSION "1.2-r137"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -911,10 +911,10 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "warn", v8::FunctionTemplate::New(isolate, k8_warn));
 	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
 	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
-	global->Set(isolate, "read_file", v8::FunctionTemplate::New(isolate, k8_read_file));
-	global->Set(isolate, "encode", v8::FunctionTemplate::New(isolate, k8_encode));
-	global->Set(isolate, "decode", v8::FunctionTemplate::New(isolate, k8_decode));
-	global->Set(isolate, "revcomp", v8::FunctionTemplate::New(isolate, k8_revcomp));
+	global->Set(isolate, "k8_read_file", v8::FunctionTemplate::New(isolate, k8_read_file));
+	global->Set(isolate, "k8_encode", v8::FunctionTemplate::New(isolate, k8_encode));
+	global->Set(isolate, "k8_decode", v8::FunctionTemplate::New(isolate, k8_decode));
+	global->Set(isolate, "k8_revcomp", v8::FunctionTemplate::New(isolate, k8_revcomp));
 	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
 	{ // add the 'Bytes' object
 		v8::HandleScope scope(isolate);

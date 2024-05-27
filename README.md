@@ -71,20 +71,20 @@ function exit(code: number)
 function load(fileName: string)
 
 // Read entire file as an ArrayBuffer
-function read_file(fileName: string): ArrayBuffer
+function k8_read_file(fileName: string): ArrayBuffer
 
 // Decode $buf to string under the $enc encoding; only "utf-8" is supported for now
 // Missing or unknown encoding is treated as Latin-1
-function decode(buf: ArrayBuffer|Bytes, enc?: string): string
+function k8_decode(buf: ArrayBuffer|Bytes, enc?: string): string
 
 // Encode $str into an ArrayBuffer
-function encode(str: string, enc?: string): ArrayBuffer
+function k8_encode(str: string, enc?: string): ArrayBuffer
 
 // Reverse complement a DNA sequence in string
-function revcomp(seq: string): string
+function k8_revcomp(seq: string): string
 
 // Reverse complement a DNA sequence in place
-function revcomp(seq: ArrayBuffer|Bytes)
+function k8_revcomp(seq: ArrayBuffer|Bytes)
 
 // Get version string
 function k8_version()

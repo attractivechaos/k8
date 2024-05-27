@@ -1,17 +1,18 @@
-Release 1.2-r135 (27 May 2024)
+Release 1.2-r137 (27 May 2024)
 ------------------------------
 
 New functions:
 
- * `read_file()`: read an entire file as an ArrayBuffer
- * `decode()`: convert an ArrayBuffer/Bytes object to a string
- * `encode()`: convert a string to an ArrayBuffer
+ * `k8_read_file()`: read an entire file as an ArrayBuffer
+ * `k8_decode()`: convert an ArrayBuffer/Bytes object to a string
+ * `k8_encode()`: convert a string to an ArrayBuffer
+ * `k8_revcomp()`: reverse complement a DNA sequence
 
 Improved:
 
- * `Bytes.read()`: more flexible API to read the rest of a file
+ * `Bytes.read()`: allow to read the rest of a file
 
-(1.2: 27 May 2024, r135)
+(1.2: 27 May 2024, r137)
 
 
 
