@@ -113,7 +113,11 @@ new File(file?: string|number = 0, mode?: string = "r")
 // Read a byte and return it
 File.prototype.read() :number
 
-// Read $len bytes into $buf at $offset. Return the number of bytes read.
+// Read the rest of the file into $buf at offset 0. Return the number of bytes read.
+File.prototype.read(buf: Bytes) :number
+
+// Read $len bytes into $buf at $offset.
+// Return the number of bytes read on success; 0 on file end; <0 on errors
 File.prototype.read(buf: Bytes, offset: number, len: number) :number
 
 // Read a line or a token to $buf at $offset. $sep=0 for SPACE, 1 for TAB and 2

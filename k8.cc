@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r131-dirty"
+#define K8_VERSION "1.1-r132-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -162,7 +162,7 @@ static inline int32_t ks_getc(k8_file_t *ks)
 static int64_t ks_read(k8_file_t *ks, uint8_t *buf, int64_t len)
 {
 	int64_t off = 0;
-	if (ks->is_eof && ks->st >= ks->en) return -1;
+	if (ks->is_eof && ks->st >= ks->en) return 0;
 	while (len > ks->en - ks->st) {
 		int64_t l = ks->en - ks->st;
 		if (l > 0) {
@@ -173,6 +173,7 @@ static int64_t ks_read(k8_file_t *ks, uint8_t *buf, int64_t len)
 		ks->en = gzread(ks->fp, ks->buf, ks->buf_size);
 		if (ks->en < ks->buf_size) ks->is_eof = 1;
 		if (ks->en == 0) return off;
+		else if (ks->en < 0) return -3; // gzread error
 	}
 	memcpy(buf + off, ks->buf + ks->st, len);
 	ks->st += len;
@@ -681,19 +682,31 @@ static void k8_file_read(const v8::FunctionCallbackInfo<v8::Value> &args)
 	if (args.Length() == 0) { // prototype.read()
 		int32_t c = ks_getc(ks);
 		args.GetReturnValue().Set(c);
-	} else if (args.Length() == 3 && args[0]->IsObject() && args[1]->IsUint32() && args[2]->IsUint32()) { // prototype.read(bytes, off, len)
+	} else if (args.Length() >= 1 && args[0]->IsObject()) {
 		v8::Handle<v8::Object> b = v8::Handle<v8::Object>::Cast(args[0]);
 		k8_bytes_t *a = (k8_bytes_t*)b->GetAlignedPointerFromInternalField(0);
 		if (a->magic != K8_BYTES_MAGIC) { // TODO: well, there got to be a better way
 			args.GetReturnValue().Set(-2);
 			return;
 		}
-		uint32_t off = args[1]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
-		uint32_t len = args[2]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
-		K8_GROW(uint8_t, a->buf.s, off + len - 1, a->buf.m);
-		int64_t ret = ks_read(ks, &a->buf.s[off], len);
-		if (a->buf.l < off + ret) a->buf.l = off + ret;
-		args.GetReturnValue().Set((int32_t)ret);
+		uint32_t off = a->buf.l;
+		if (args.Length() >= 2 && args[1]->IsUint32())
+			off = args[1]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
+		if (args.Length() == 3 && args[1]->IsUint32() && args[2]->IsUint32()) { // prototype.read(bytes, off, len)
+			uint32_t len = args[2]->Uint32Value(isolate->GetCurrentContext()).FromMaybe(0);
+			K8_GROW(uint8_t, a->buf.s, off + len - 1, a->buf.m);
+			int64_t ret = ks_read(ks, &a->buf.s[off], len);
+			if (ret > 0 && a->buf.l < off + ret) a->buf.l = off + ret;
+			args.GetReturnValue().Set((int32_t)ret);
+		} else if (args.Length() == 1 || (args.Length() == 2 && args[1]->IsUint32())) { // prototype.read(bytes) or prototype.read(bytes, off)
+			kstring_t tmp = {0,0,0};
+			ks_read_all(ks, &tmp);
+			K8_GROW(uint8_t, a->buf.s, off + tmp.l, a->buf.m);
+			memcpy(&a->buf.s[off], tmp.s, tmp.l);
+			a->buf.l = off + tmp.l;
+			free(tmp.s);
+			args.GetReturnValue().Set((int32_t)tmp.l);
+		}
 	}
 }
 
