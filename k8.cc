@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r134-dirty"
+#define K8_VERSION "1.1-r135-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -536,6 +536,42 @@ static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 	args.GetReturnValue().Set(v8::String::NewFromUtf8Literal(args.GetIsolate(), K8_VERSION));
 }
 
+const char k8_comp_tab[] = {
+	  0,   1,	2,	 3,	  4,   5,	6,	 7,	  8,   9,  10,	11,	 12,  13,  14,	15,
+	 16,  17,  18,	19,	 20,  21,  22,	23,	 24,  25,  26,	27,	 28,  29,  30,	31,
+	 32,  33,  34,	35,	 36,  37,  38,	39,	 40,  41,  42,	43,	 44,  45,  46,	47,
+	 48,  49,  50,	51,	 52,  53,  54,	55,	 56,  57,  58,	59,	 60,  61,  62,	63,
+	 64, 'T', 'V', 'G', 'H', 'E', 'F', 'C', 'D', 'I', 'J', 'M', 'L', 'K', 'N', 'O',
+	'P', 'Q', 'Y', 'S', 'A', 'A', 'B', 'W', 'X', 'R', 'Z',	91,	 92,  93,  94,	95,
+	 64, 't', 'v', 'g', 'h', 'e', 'f', 'c', 'd', 'i', 'j', 'm', 'l', 'k', 'n', 'o',
+	'p', 'q', 'y', 's', 'a', 'a', 'b', 'w', 'x', 'r', 'z', 123, 124, 125, 126, 127
+};
+
+static void k8_revcomp(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	if (args.Length() == 0) return;
+	v8::HandleScope handle_scope(args.GetIsolate());
+	uint8_t *seq = 0;
+	int64_t len = 0;
+	if (args[0]->IsArrayBuffer())  {
+		seq = (uint8_t*)args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+	} else if (args[0]->IsObject()) {
+		if (args[0].As<v8::Object>()->InternalFieldCount() > 0) {
+			k8_bytes_t *a = (k8_bytes_t*)args[0].As<v8::Object>()->GetAlignedPointerFromInternalField(0);
+			if (a && a->magic == K8_BYTES_MAGIC)
+				seq = a->buf.s, len = a->buf.l;
+		}
+	}
+	if (seq == 0) return;
+	for (int64_t i = 0; i < len>>1; ++i) {
+		uint8_t tmp = seq[len - 1 - i];
+		seq[len - 1 - i] = seq[i] < 128? k8_comp_tab[seq[i]] : seq[i];
+		seq[i] = tmp < 128? k8_comp_tab[tmp] : tmp;
+	}
+	if (len & 1) seq[len>>1] = seq[len>>1] < 128? k8_comp_tab[seq[len>>1]] : seq[len>>1];
+}
+
 /***********************
  *** The Bytes class ***
  ***********************/
@@ -866,6 +902,7 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "read_file", v8::FunctionTemplate::New(isolate, k8_read_file));
 	global->Set(isolate, "encode", v8::FunctionTemplate::New(isolate, k8_encode));
 	global->Set(isolate, "decode", v8::FunctionTemplate::New(isolate, k8_decode));
+	global->Set(isolate, "revcomp", v8::FunctionTemplate::New(isolate, k8_revcomp));
 	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
 	{ // add the 'Bytes' object
 		v8::HandleScope scope(isolate);

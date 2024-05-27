@@ -1,3 +1,20 @@
+Release 1.2-r135 (27 May 2024)
+------------------------------
+
+New functions:
+
+ * `read_file()`: read an entire file as an ArrayBuffer
+ * `decode()`: convert an ArrayBuffer/Bytes object to a string
+ * `encode()`: convert a string to an ArrayBuffer
+
+Improved:
+
+ * `Bytes.read()`: more flexible API to read the rest of a file
+
+(1.2: 27 May 2024, r135)
+
+
+
 Release 1.1-r129 (26 May 2024)
 ------------------------------
 
