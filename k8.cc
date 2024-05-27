@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r132-dirty"
+#define K8_VERSION "1.1-r133-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -462,6 +462,64 @@ static void k8_load(const v8::FunctionCallbackInfo<v8::Value> &args) // load(): 
 	}
 }
 
+static void k8_read_file(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	if (args.Length() != 1) return;
+	v8::HandleScope handle_scope(args.GetIsolate());
+	v8::String::Utf8Value fn(args.GetIsolate(), args[0]);
+	k8_file_t *fp = ks_open(-1, *fn, "r");
+	if (fp == 0) return;
+	kstring_t buf = {0,0,0};
+	if (ks_read_all(fp, &buf) < 0) return;
+	v8::Handle<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(args.GetIsolate(), buf.l);
+	memcpy(ab->GetBackingStore()->Data(), buf.s, buf.l);
+	args.GetReturnValue().Set(ab);
+}
+
+static void k8_encode(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	if (args.Length() == 0 || !args[0]->IsString()) return;
+	v8::Isolate *isolate = args.GetIsolate();
+	v8::HandleScope handle_scope(isolate);
+	int32_t type = 0; // Latin-1
+	if (args.Length() >= 2) {
+		v8::String::Utf8Value e(isolate, args[1]);
+		if (strcmp(*e, "utf8") == 0 || strcmp(*e, "utf-8") == 0 || strcmp(*e, "UTF8") == 0 || strcmp(*e, "UTF-8") == 0)
+			type = 1; // UTF-8
+	}
+	if (type == 0) {
+		v8::Handle<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(isolate, args[0].As<v8::String>()->Length());
+		args[0].As<v8::String>()->WriteOneByte(isolate, (uint8_t*)ab->GetBackingStore()->Data());
+		args.GetReturnValue().Set(ab);
+	} else if (type == 1) {
+		v8::Handle<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(isolate, args[0].As<v8::String>()->Utf8Length(isolate));
+		args[0].As<v8::String>()->WriteUtf8(isolate, (char*)ab->GetBackingStore()->Data());
+		args.GetReturnValue().Set(ab);
+	}
+}
+
+static void k8_decode(const v8::FunctionCallbackInfo<v8::Value> &args)
+{
+	if (args.Length() == 0 || !args[0]->IsArrayBuffer()) return;
+	v8::HandleScope handle_scope(args.GetIsolate());
+	void *data = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+	int64_t len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+	int32_t type = 0; // Latin-1
+	v8::Local<v8::String> str;
+	if (args.Length() >= 2) {
+		v8::String::Utf8Value e(args.GetIsolate(), args[1]);
+		if (strcmp(*e, "utf8") == 0 || strcmp(*e, "utf-8") == 0 || strcmp(*e, "UTF8") == 0 || strcmp(*e, "UTF-8") == 0)
+			type = 1; // UTF-8
+	}
+	if (type == 0) {
+		if (v8::String::NewFromOneByte(args.GetIsolate(), (uint8_t*)data, v8::NewStringType::kNormal, len).ToLocal(&str))
+			args.GetReturnValue().Set(str);
+	} else if (type == 1) {
+		if (v8::String::NewFromUtf8(args.GetIsolate(), (char*)data, v8::NewStringType::kNormal, len).ToLocal(&str))
+			args.GetReturnValue().Set(str);
+	}
+}
+
 static void k8_version(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
 	args.GetReturnValue().Set(v8::String::NewFromUtf8Literal(args.GetIsolate(), K8_VERSION));
@@ -794,6 +852,9 @@ static v8::Local<v8::Context> k8_create_shell_context(v8::Isolate* isolate)
 	global->Set(isolate, "warn", v8::FunctionTemplate::New(isolate, k8_warn));
 	global->Set(isolate, "exit", v8::FunctionTemplate::New(isolate, k8_exit));
 	global->Set(isolate, "load", v8::FunctionTemplate::New(isolate, k8_load));
+	global->Set(isolate, "read_file", v8::FunctionTemplate::New(isolate, k8_read_file));
+	global->Set(isolate, "encode", v8::FunctionTemplate::New(isolate, k8_encode));
+	global->Set(isolate, "decode", v8::FunctionTemplate::New(isolate, k8_decode));
 	global->Set(isolate, "k8_version", v8::FunctionTemplate::New(isolate, k8_version));
 	{ // add the 'Bytes' object
 		v8::HandleScope scope(isolate);
