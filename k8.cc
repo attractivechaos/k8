@@ -23,7 +23,7 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
 */
-#define K8_VERSION "1.1-r133-dirty"
+#define K8_VERSION "1.1-r134-dirty"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -500,17 +500,28 @@ static void k8_encode(const v8::FunctionCallbackInfo<v8::Value> &args)
 
 static void k8_decode(const v8::FunctionCallbackInfo<v8::Value> &args)
 {
-	if (args.Length() == 0 || !args[0]->IsArrayBuffer()) return;
+	if (args.Length() == 0) return;
 	v8::HandleScope handle_scope(args.GetIsolate());
-	void *data = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
-	int64_t len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+	void *data = 0;
+	int64_t len = 0;
+	if (args[0]->IsArrayBuffer())  {
+		data = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->Data();
+		len = args[0].As<v8::ArrayBuffer>()->GetBackingStore()->ByteLength();
+	} else if (args[0]->IsObject()) {
+		if (args[0].As<v8::Object>()->InternalFieldCount() > 0) {
+			k8_bytes_t *a = (k8_bytes_t*)args[0].As<v8::Object>()->GetAlignedPointerFromInternalField(0);
+			if (a && a->magic == K8_BYTES_MAGIC)
+				data = a->buf.s, len = a->buf.l;
+		}
+	}
+	if (data == 0) return;
 	int32_t type = 0; // Latin-1
-	v8::Local<v8::String> str;
 	if (args.Length() >= 2) {
 		v8::String::Utf8Value e(args.GetIsolate(), args[1]);
 		if (strcmp(*e, "utf8") == 0 || strcmp(*e, "utf-8") == 0 || strcmp(*e, "UTF8") == 0 || strcmp(*e, "UTF-8") == 0)
 			type = 1; // UTF-8
 	}
+	v8::Local<v8::String> str;
 	if (type == 0) {
 		if (v8::String::NewFromOneByte(args.GetIsolate(), (uint8_t*)data, v8::NewStringType::kNormal, len).ToLocal(&str))
 			args.GetReturnValue().Set(str);

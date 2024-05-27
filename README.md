@@ -73,16 +73,12 @@ function load(fileName: string)
 // Read entire file as an ArrayBuffer
 function read_file(fileName: string): ArrayBuffer
 
-// Decode $buf to string under the Latin-1 (aka ISO-8859-1) encoding
-function decode(buf: ArrayBuffer): string
-
 // Decode $buf to string under the $enc encoding; only "utf-8" is supported for now
-// Unknown encoding is treated as Latin-1
-function decode(buf: ArrayBuffer, enc: string): string
+// Missing or unknown encoding is treated as Latin-1
+function decode(buf: ArrayBuffer|Bytes, enc?: string): string
 
 // Encode $str into an ArrayBuffer
-function encode(str: string): ArrayBuffer
-function encode(str: string, enc: string): ArrayBuffer
+function encode(str: string, enc?: string): ArrayBuffer
 
 // Get version string
 function k8_version()
