@@ -4,7 +4,7 @@
 wget -O- https://github.com/attractivechaos/k8/releases/download/v1.2/k8-1.2.tar.bz2 | tar -jxf -
 k8-1.2/k8-x86_64-Linux -e 'print(Math.log(2))'
 
-# Compile from source code. This requires to compile node.js first:
+# Compile from source code. This requires to compile node.js first (or v18.20.3 on Mac):
 wget -O- https://nodejs.org/dist/v18.19.1/node-v18.19.1.tar.gz | tar -zxf -
 cd node-v18.19.1 && ./configure && make -j16
 # Then compile k8
@@ -53,6 +53,8 @@ specific versions of v8. The k8-1.x branch is known to work with node-18.x but
 not 19.x or higher. It is also worth noting that node-18.20.x upgraded
 [c-ares][c-ares] which is now incompatible with older glibc. Node-18.19.1 is
 the most recent version that can be compiled on CentOS 7.
+On the other hand, Node-18.19.x cannot be compiled on MacOS with clang-15.
+Node-18.20.3 is known to work.
 
 ## API Documentations
 
