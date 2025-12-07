@@ -344,7 +344,8 @@ class AVLtree {
 				r.p[1] = p.p[1];
 				r.balance = p.balance;
 				path[e-1].p[dir[e-1]] = r;
-				path[e] = r, dir[e] = 1;
+				path.splice(e, 0, r);
+				dir.splice(e, 0, 1);
 			}
 		}
 		while (path.length > 0) {
