@@ -344,6 +344,7 @@ class AVLtree {
 				r.p[1] = p.p[1];
 				r.balance = p.balance;
 				path[e-1].p[dir[e-1]] = r;
+				// the following two lines are suggested by Gemini 3; see avl-fix/* for details
 				path.splice(e, 0, r);
 				dir.splice(e, 0, 1);
 			}
